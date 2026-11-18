@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11151b">
+  <meta name="description" content="用草图描述仿真的约束、载荷和待确认方向。">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <title>SimSketch · 仿真草图</title>
+</head>
+<body>
+  <header class="header">
+    <div class="brand"><img src="./icon.svg" width="40" height="40" alt=""><div><strong>SimSketch</strong><span>仿真草图</span></div></div>
+    <div class="header-actions" inert>
+      <button id="install" class="quiet">安装应用</button>
+      <button id="settings" class="quiet">模型设置</button>
+      <button id="import" class="primary">＋ 导入图片</button>
+      <input id="image-file" type="file" accept="image/*" hidden>
+    </div>
+  </header>
+  <main inert>
+    <div class="project">
+      <div><h1>仿真草图</h1><p id="status" role="status">正在读取草稿…</p></div>
+      <div class="project-actions"><button id="demo" class="quiet">支架示例</button><button id="new" class="quiet">新建空白</button></div>
+    </div>
+    <div class="workspace">
+      <section class="studio" aria-label="草图画板">
+        <div class="tools">
+          <div class="tool-group" role="group" aria-label="绘图工具">
+            <button data-tool="pen" aria-pressed="true" title="画笔"><span>✎</span>画笔</button>
+            <button data-tool="region" aria-pressed="false" title="圈选区域"><span>◯</span>圈选</button>
+            <button data-tool="arrow" aria-pressed="false" title="画载荷箭头"><span>↗</span>箭头</button>
+            <button data-tool="text" aria-pressed="false" title="文字"><span>T</span>文字</button>
+            <button data-tool="select" aria-pressed="false" title="选择及编辑标注"><span>⌖</span>选择</button>
+          </div>
+          <div class="tool-group history" role="group" aria-label="绘图历史"><button id="undo" title="撤销" aria-label="撤销">↶</button><button id="redo" title="重做" aria-label="重做">↷</button></div>
+        </div>
+        <div class="board-wrap">
+          <svg id="board" viewBox="0 0 960 600" aria-label="绘图区域" role="img" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <div class="board-footer"><span id="hint">在画板上拖动绘制</span><button class="quiet" id="export-png">导出 PNG</button></div>
+      </section>
+      <aside class="inspector" aria-label="仿真标注">
+        <div class="inspector-top"><h2>仿真标注</h2><button class="quiet" id="export-json">导出 JSON</button></div>
+        <button class="primary analyze" id="analyze">✦ AI 读图</button>
+        <p id="analysis-status" role="status"></p>
+        <div id="annotations"></div>
+      </aside>
+    </div>
+  </main>
+  <dialog id="edit-dialog">
+    <form id="edit-form">
+      <h2 id="edit-title">编辑标注</h2>
+      <label>类型<select name="kind"><option value="note">备注</option><option value="fixed">固定约束</option><option value="force">力</option><option value="pressure">压力</option><option value="other">其他条件</option></select></label>
+      <label>标注<input name="label" maxlength="140" placeholder="例如：右侧上表面"></label>
+      <div class="form-row">
+        <label>数值<input name="value" type="number" step="any" inputmode="decimal"></label>
+        <label>单位<input name="unit" maxlength="16" placeholder="N / Pa"></label>
+      </div>
+      <label>模型方向<input name="direction" maxlength="80" placeholder="例如：模型 −Z 或重力方向"></label>
+      <label>待确认事项<input name="question" maxlength="200"></label>
+      <label class="check"><input name="confirmed" type="checkbox">已确认</label>
+      <div class="dialog-actions"><button class="danger" type="button" id="delete-mark">删除</button><span></span><button type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <h2>模型设置</h2>
+      <p>点击「AI 读图」时，草图和标注会发往所选服务。密钥仅保留在当前页面。</p>
+      <label>Chat Completions 接口<input name="endpoint" type="url" required placeholder="https://api.example.com/v1/chat/completions"></label>
+      <label>支持图片的模型<input name="model" required placeholder="填写服务端模型名"></label>
+      <label>API 密钥<input name="key" type="password" autocomplete="off" placeholder="服务要求时填写"></label>
+      <div class="dialog-actions"><span></span><button type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
+  <dialog id="install-dialog"><section><h2>安装 SimSketch</h2><p>iPhone / iPad：在 Safari 分享菜单中选「添加到主屏幕」，并开启「作为网页 App 打开」。</p><p>Android 或桌面 Chrome / Edge：在浏览器菜单中选择安装应用。Mac Safari 也可以「添加到程序坞」。</p><div class="dialog-actions"><span></span><button class="primary" data-close>完成</button></div></section></dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

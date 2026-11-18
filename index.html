@@ -39,9 +39,10 @@
           <div class="tool-group history" role="group" aria-label="绘图历史"><button id="undo" title="撤销" aria-label="撤销">↶</button><button id="redo" title="重做" aria-label="重做">↷</button></div>
         </div>
         <div class="board-wrap">
+          <canvas id="gpu-board" aria-hidden="true"></canvas>
           <svg id="board" viewBox="0 0 960 600" aria-label="绘图区域" role="img" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
-        <div class="board-footer"><span id="hint">在画板上拖动绘制</span><button class="quiet" id="export-png">导出 PNG</button></div>
+        <div class="board-footer"><span id="hint">在画板上拖动绘制</span><span id="renderer" role="status"></span><button class="quiet" id="export-png">导出 PNG</button></div>
       </section>
       <aside class="inspector" aria-label="仿真标注">
         <div class="inspector-top"><h2>仿真标注</h2><button class="quiet" id="export-json">导出 JSON</button></div>

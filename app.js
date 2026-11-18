@@ -1,10 +1,12 @@
 import {bitmap, boardPoint, drawBoard, readReference} from './board.js';
 import {demoProject, emptyProject, kindLabel, newMark, readProject, saveProject} from './project.js';
+import {createGpuBoard} from './gpu-board.js';
 import {interpretSketch} from './vision.js';
 
 const $ = selector => document.querySelector(selector);
 const board = $('#board');
 const status = $('#status');
+const rendererStatus = $('#renderer');
 const annotations = $('#annotations');
 const analysisStatus = $('#analysis-status');
 const editDialog = $('#edit-dialog');
@@ -14,6 +16,7 @@ const settingsForm = $('#settings-form');
 const analyze = $('#analyze');
 
 let project;
+let paintGpu;
 let selection = null;
 let drawing = null;
 let editMark = null;
@@ -43,8 +46,14 @@ function setTool(next) {
   $('#hint').textContent = messages[next];
 }
 
+function paintBoard() {
+  const temporary = drawing?.mark ?? null;
+  drawBoard(board, project, temporary, selection);
+  paintGpu?.(project, temporary, selection);
+}
+
 function render() {
-  drawBoard(board, project, drawing?.mark, selection);
+  paintBoard();
   $('#undo').disabled = !undo.length;
   $('#redo').disabled = !redo.length;
   const cards = project.marks.filter(mark => mark.shape !== 'pen' || mark.label || mark.kind !== 'note');
@@ -147,7 +156,7 @@ board.addEventListener('pointerdown', event => {
   board.setPointerCapture(event.pointerId);
   drawing = {id: event.pointerId, mark: tool === 'pen' ? newMark('pen', {points: [point]}) :
     newMark(tool, {a: point, b: point, kind: tool === 'arrow' ? 'force' : 'note'})};
-  drawBoard(board, project, drawing.mark, selection);
+  paintBoard();
 });
 
 function extendStroke(event) {
@@ -166,7 +175,7 @@ function extendStroke(event) {
 board.addEventListener('pointermove', event => {
   if (drawing?.id !== event.pointerId) return;
   extendStroke(event);
-  drawBoard(board, project, drawing.mark, selection);
+  paintBoard();
 });
 
 board.addEventListener('pointerup', event => {
@@ -352,6 +361,25 @@ $('#install').onclick = async () => {
   }
 };
 
+function showRenderer(mode) {
+  const active = mode === 'WebGPU';
+  if (rendererStatus.textContent === mode) return;
+  board.parentElement.dataset.gpu = String(active);
+  rendererStatus.textContent = mode;
+}
+
+async function startRenderer() {
+  showRenderer('WebGPU 准备中');
+  try {
+    paintGpu = await createGpuBoard($('#gpu-board'), showRenderer);
+    if (paintGpu) paintBoard();
+    else showRenderer('SVG 兼容模式');
+  } catch (error) {
+    showRenderer('SVG 兼容模式');
+    console.warn('WebGPU 初始化失败。', error);
+  }
+}
+
 async function start() {
   try {
     const draft = await readProject();
@@ -368,6 +396,7 @@ async function start() {
   setTool(tool);
   $('main').inert = false;
   $('.header-actions').inert = false;
+  void startRenderer();
 
   if (!('serviceWorker' in navigator)) return;
   try {

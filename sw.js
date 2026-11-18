@@ -1,6 +1,6 @@
-const cacheName = 'sim-sketch-shell-v2';
+const cacheName = 'sim-sketch-shell-v3';
 const shell = [
-  './', './index.html', './style.css', './app.js', './board.js', './project.js', './vision.js',
+  './', './index.html', './style.css', './app.js', './board.js', './project.js', './vision.js', './gpu-board.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './maskable.png'
 ].map(path => new URL(path, self.registration.scope).href);
 

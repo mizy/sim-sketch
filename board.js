@@ -43,8 +43,32 @@ function demoGeometry() {
   return group;
 }
 
-function annotation(mark, selected) {
+export function markGeometry(mark, selected) {
   const color = colors[mark.kind];
+  switch (mark.shape) {
+    case 'pen':
+      return {color, width: selected ? 6 : 4, points: mark.points};
+    case 'region': {
+      const {a, b} = mark;
+      return {color, width: selected ? 5 : 3, center: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+        radii: [Math.max(3, Math.abs(a[0] - b[0]) / 2), Math.max(3, Math.abs(a[1] - b[1]) / 2)],
+        fill: selected ? .23 : .11, dashed: mark.source === 'ai'};
+    }
+    case 'arrow': {
+      const {a, b} = mark;
+      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const length = Math.min(21, Math.hypot(b[0] - a[0], b[1] - a[1]) * .47);
+      const tip = offset => [b[0] - length * Math.cos(angle + offset), b[1] - length * Math.sin(angle + offset)];
+      return {color, width: selected ? 7 : 5, points: [a, b, tip(.55), b, tip(-.55)]};
+    }
+    case 'text':
+      return {color};
+  }
+}
+
+function annotation(mark, selected) {
+  const style = markGeometry(mark, selected);
+  const {color, width: strokeWidth} = style;
   const group = svg('g', {'data-id': mark.id, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'});
   let anchor;
   switch (mark.shape) {
@@ -53,27 +77,24 @@ function annotation(mark, selected) {
       const trace = mark.points.length === 1 ? [anchor, [anchor[0] + .1, anchor[1]]] : mark.points;
       const points = trace.map(point => point.join(',')).join(' ');
       group.append(svg('polyline', {points, fill: 'none', stroke: 'transparent', 'stroke-width': 18}));
-      group.append(svg('polyline', {points, fill: 'none', stroke: color, 'stroke-width': selected ? 6 : 4}));
+      group.append(svg('polyline', {points, fill: 'none', class: 'board-geometry', stroke: color, 'stroke-width': strokeWidth}));
       break;
     }
     case 'region': {
       const {a, b} = mark;
       anchor = [Math.min(a[0], b[0]), Math.min(a[1], b[1])];
-      group.append(svg('ellipse', {cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2,
-        rx: Math.max(3, Math.abs(a[0] - b[0]) / 2), ry: Math.max(3, Math.abs(a[1] - b[1]) / 2),
-        fill: color, 'fill-opacity': selected ? .23 : .11, stroke: color, 'stroke-width': selected ? 5 : 3,
-        'stroke-dasharray': mark.source === 'ai' ? '9 5' : 'none'}));
+      const {center: [cx, cy], radii: [rx, ry], fill, dashed} = style;
+      group.append(svg('ellipse', {class: 'board-geometry', cx, cy, rx, ry, fill: color,
+        'fill-opacity': fill, stroke: color, 'stroke-width': strokeWidth,
+        'stroke-dasharray': dashed ? '9 5' : 'none'}));
       break;
     }
     case 'arrow': {
-      const {a, b} = mark;
+      const [a, b, left, , right] = style.points;
       anchor = a;
-      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
-      const length = Math.min(21, Math.hypot(b[0] - a[0], b[1] - a[1]) * .47);
-      const tip = offset => [b[0] - length * Math.cos(angle + offset), b[1] - length * Math.sin(angle + offset)];
-      const d = `M${a} L${b} M${tip(.55)} L${b} L${tip(-.55)}`;
+      const d = `M${a} L${b} M${left} L${b} L${right}`;
       group.append(svg('path', {d, fill: 'none', stroke: 'transparent', 'stroke-width': 22}));
-      group.append(svg('path', {d, fill: 'none', stroke: color, 'stroke-width': selected ? 7 : 5}));
+      group.append(svg('path', {d, class: 'board-geometry', fill: 'none', stroke: color, 'stroke-width': strokeWidth}));
       break;
     }
     case 'text':
@@ -96,19 +117,55 @@ function annotation(mark, selected) {
   return group;
 }
 
+const boardLayers = new WeakMap();
+
 export function drawBoard(board, project, temporary = null, selected = null) {
-  const dots = svg('pattern', {id: 'grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse'},
-    [svg('circle', {cx: 1.4, cy: 1.4, r: 1.25, fill: '#344457'})]);
-  board.replaceChildren(svg('defs', {}, [dots]),
-    svg('rect', {width: 960, height: 600, fill: '#151e2a'}),
-    svg('rect', {width: 960, height: 600, fill: 'url(#grid)'}));
-  if (project.reference === 'demo') board.append(demoGeometry());
-  else if (project.reference) board.append(svg('image', {href: project.reference, width: 960, height: 600}));
-  for (const mark of project.marks) board.append(annotation(mark, mark.id === selected));
-  if (temporary) board.append(annotation(temporary, false));
+  let layers = boardLayers.get(board);
+  if (!layers) {
+    const dots = svg('pattern', {id: 'grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse'},
+      [svg('circle', {cx: 1.4, cy: 1.4, r: 1.25, fill: '#344457'})]);
+    const reference = svg('g', {class: 'board-geometry'});
+    const marks = svg('g');
+    board.replaceChildren(svg('defs', {}, [dots]),
+      svg('rect', {class: 'board-geometry', width: 960, height: 600, fill: '#151e2a'}),
+      svg('rect', {class: 'board-geometry', width: 960, height: 600, fill: 'url(#grid)'}),
+      reference, marks);
+    layers = {reference, marks};
+    boardLayers.set(board, layers);
+  }
+  if (layers.referenceValue !== project.reference) {
+    const reference = referenceLayer(project.reference);
+    layers.reference.replaceChildren(...(reference ? [reference] : []));
+    layers.referenceValue = project.reference;
+  }
+  if (layers.markValues !== project.marks || layers.selected !== selected) {
+    layers.marks.replaceChildren(...project.marks.map(mark => annotation(mark, mark.id === selected)));
+    layers.markValues = project.marks;
+    layers.selected = selected;
+    layers.temporary = null;
+  }
+  layers.temporary?.remove();
+  layers.temporary = temporary ? annotation(temporary, false) : null;
+  if (layers.temporary) layers.marks.append(layers.temporary);
 }
 
-export async function bitmap(svgNode, quality = 'image/png') {
+function referenceLayer(reference) {
+  if (reference === 'demo') return demoGeometry();
+  if (reference) return svg('image', {href: reference, width: 960, height: 600});
+  return null;
+}
+
+export async function referenceCanvas(reference) {
+  const layer = referenceLayer(reference);
+  if (!layer) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    return canvas;
+  }
+  return rasterize(svg('svg', {viewBox: '0 0 960 600'}, [layer]));
+}
+
+async function rasterize(svgNode) {
   const copy = svgNode.cloneNode(true);
   copy.setAttribute('width', '960');
   copy.setAttribute('height', '600');
@@ -120,7 +177,11 @@ export async function bitmap(svgNode, quality = 'image/png') {
   canvas.width = 960;
   canvas.height = 600;
   canvas.getContext('2d').drawImage(image, 0, 0);
-  return canvas.toDataURL(quality, .92);
+  return canvas;
+}
+
+export async function bitmap(svgNode, quality = 'image/png') {
+  return (await rasterize(svgNode)).toDataURL(quality, .92);
 }
 
 export async function readReference(file) {

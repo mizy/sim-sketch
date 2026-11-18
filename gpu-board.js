@@ -7,6 +7,7 @@ function rgb(color) {
 
 const shader = `
 const boardSize = vec2f(960, 600);
+@group(1) @binding(0) var<uniform> viewport: vec4f;
 
 fn corner(index: u32) -> vec2f {
   return vec2f(f32(index & 1u), f32(index >> 1u));
@@ -30,14 +31,17 @@ struct BackVertex {
 }
 
 @fragment fn backFragment(input: BackVertex) -> @location(0) vec4f {
-  let p = input.uv * boardSize;
+  let p = viewport.xy + input.uv * viewport.zw;
   let offset = p - vec2f(1.4);
   let tile = offset - floor(offset / 24.0 + 0.5) * 24.0;
   let distance = length(tile);
   let aa = max(length(fwidth(p)) * 0.5, 0.4);
   let dot = 1.0 - smoothstep(1.25 - aa, 1.25 + aa, distance);
   let grid = mix(vec3f(${rgb(paper.background)}), vec3f(${rgb(paper.dot)}), dot) / 255.0;
-  let reference = textureSample(referenceImage, referenceSampler, input.uv);
+  let referenceUv = p / boardSize;
+  let sampled = textureSample(referenceImage, referenceSampler, referenceUv);
+  let inside = all(referenceUv >= vec2f(0)) && all(referenceUv <= vec2f(1));
+  let reference = select(vec4f(0), sampled, inside);
   return vec4f(reference.rgb + grid * (1.0 - reference.a), 1);
 }
 
@@ -62,7 +66,7 @@ struct MarkVertex {
   let lower = select(min(a, b), a - b, ellipse) - margin;
   let upper = select(max(a, b), a + b, ellipse) + margin;
   let point = mix(lower, upper, corner(index));
-  return MarkVertex(clip(point / boardSize), point, geometry, style, color);
+  return MarkVertex(clip((point - viewport.xy) / viewport.zw), point, geometry, style, color);
 }
 
 @fragment fn markFragment(input: MarkVertex) -> @location(0) vec4f {
@@ -166,6 +170,9 @@ export async function createGpuBoard(canvas, onStatus) {
   let requestedReference;
   let texture;
   let buffer;
+  const viewBuffer = device.createBuffer({size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+  const backgroundView = device.createBindGroup({layout: background.getBindGroupLayout(1), entries: [{binding: 0, resource: {buffer: viewBuffer}}]});
+  const marksView = device.createBindGroup({layout: marksPipeline.getBindGroupLayout(1), entries: [{binding: 0, resource: {buffer: viewBuffer}}]});
   const sampler = device.createSampler({magFilter: 'linear', minFilter: 'linear'});
   const observer = new ResizeObserver(schedule);
 
@@ -176,6 +183,7 @@ export async function createGpuBoard(canvas, onStatus) {
     observer.disconnect();
     texture?.destroy();
     buffer?.destroy();
+    viewBuffer.destroy();
     context.unconfigure();
     device.destroy();
     onStatus('SVG 兼容模式');
@@ -204,6 +212,8 @@ export async function createGpuBoard(canvas, onStatus) {
       const frameHeight = Math.max(1, Math.round(height * scale));
       if (canvas.width !== frameWidth) canvas.width = frameWidth;
       if (canvas.height !== frameHeight) canvas.height = frameHeight;
+      const view = canvas.nextElementSibling.viewBox.baseVal;
+      device.queue.writeBuffer(viewBuffer, 0, new Float32Array([view.x, view.y, view.width, view.height]));
       const instances = packMarks(pending.project.marks, pending.temporary, pending.selected);
       if (instances.length) {
         if (!buffer || buffer.size < instances.byteLength) {
@@ -219,9 +229,11 @@ export async function createGpuBoard(canvas, onStatus) {
       }]});
       pass.setPipeline(background);
       pass.setBindGroup(0, picture.bindGroup);
+      pass.setBindGroup(1, backgroundView);
       pass.draw(4);
       if (instances.length) {
         pass.setPipeline(marksPipeline);
+        pass.setBindGroup(1, marksView);
         pass.setVertexBuffer(0, buffer);
         pass.draw(4, instances.length / instanceFloats);
       }

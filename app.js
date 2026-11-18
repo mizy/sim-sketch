@@ -1,48 +1,39 @@
 import {bitmap, boardPoint, drawBoard, readReference} from './board.js';
-import {demoProject, emptyProject, markColor, markKinds, markLegend, newMark, readProject, saveProject} from './project.js';
+import {demoProject, emptyProject, markColor, markKinds, markLegend, newLayer, newMark, normalizeProject, readProject, saveProject} from './project.js';
 import {createGpuBoard} from './gpu-board.js';
-import {interpretSketch} from './vision.js';
 
 const $ = selector => document.querySelector(selector);
 const board = $('#board');
 const status = $('#status');
-const rendererStatus = $('#renderer');
 const annotations = $('#annotations');
-const analysisStatus = $('#analysis-status');
+const notice = $('#notice');
 const editDialog = $('#edit-dialog');
 const editForm = $('#edit-form');
-const settingsDialog = $('#settings-dialog');
-const settingsForm = $('#settings-form');
-const analyze = $('#analyze');
 const presets = $('#preset-colors');
 const customColor = $('#custom-color');
 const customBrush = customColor.closest('label');
 const brushLabel = $('#brush-label');
+const textInput = $('#canvas-text');
+let inlineText = null;
 
 let project;
 let paintGpu;
 let selection = null;
 let drawing = null;
 let editMark = null;
+let activeLayerId = null;
+let opacityPreview = null;
 let tool = 'pen';
 let brush = 'auto';
 let revision = 0;
 let pendingSave = Promise.resolve();
 const undo = [];
 const redo = [];
-let modelSettings = {endpoint: '', model: '', key: ''};
-
-try {
-  const saved = JSON.parse(localStorage.getItem('sim-sketch:model') || '{}');
-  modelSettings = {endpoint: saved.endpoint || '', model: saved.model || '', key: ''};
-} catch {
-  // Drawing remains available with browser storage disabled.
-}
-
 const messages = {pen: '在画板上拖动绘制', region: '从区域的一角拖到对角', arrow: '从箭尾拖到受力位置',
-  text: '轻点画板放置文字', select: '轻点画板或右侧列表中的标注进行编辑'};
+  text: '点击画布输入文字', select: '拖动对象移动，双击编辑'};
 
 function setTool(next) {
+  if (inlineText) finishText();
   tool = next;
   board.dataset.tool = next;
   for (const button of document.querySelectorAll('[data-tool]:not(svg)')) {
@@ -83,6 +74,10 @@ for (const [kind, style] of [['auto', {label: '自动'}], ...Object.entries(mark
     automatic.classList.add('auto-swatch');
     button.append(automatic);
   }
+  const name = document.createElement('span');
+  name.className = 'color-name';
+  name.textContent = style.label;
+  button.append(name);
   button.addEventListener('click', () => chooseBrush(kind));
   presets.append(button);
   if (kind !== 'auto') editForm.elements.kind.add(new Option(style.label, kind));
@@ -93,7 +88,7 @@ chooseBrush('auto');
 function startMark(shape, geometry) {
   const defaultKind = shape === 'arrow' ? 'force' : 'note';
   const kind = Object.hasOwn(markKinds, brush) ? brush : defaultKind;
-  return newMark(shape, {...geometry, kind, ...(brush === 'custom' ? {color: customColor.value} : {})});
+  return newMark(shape, {...geometry, kind, layerId: activeLayerId, ...(brush === 'custom' ? {color: customColor.value} : {})});
 }
 
 function renderLegend() {
@@ -108,18 +103,84 @@ function renderLegend() {
 }
 
 function paintBoard() {
-  const temporary = drawing?.mark ?? null;
-  drawBoard(board, project, temporary, selection);
-  paintGpu?.(project, temporary, selection);
+  let state = project;
+  if (drawing?.mode === 'move' && drawing.moved) {
+    state = {...state, marks: state.marks.map(mark => mark.id === drawing.original.id ? drawing.mark : mark)};
+  }
+  if (opacityPreview) {
+    state = {...state, layers: state.layers.map(layer => layer.id === opacityPreview.id ? {...layer, opacity: opacityPreview.value} : layer)};
+  }
+  const temporary = drawing?.mode === 'move' ? null : drawing?.mark ?? null;
+  drawBoard(board, state, temporary, selection);
+  // The grid is GPU rendered; SVG composites each whole layer with its opacity.
+  paintGpu?.({...state, reference: null, marks: []}, null, null);
+}
+
+function renderLayers() {
+  const selected = project.marks.find(mark => mark.id === selection);
+  const actions = $('#selection-actions');
+  actions.hidden = !selected;
+  if (selected) {
+    const select = $('#object-layer');
+    select.replaceChildren(...project.layers.map(layer => new Option(layer.name, layer.id)));
+    select.value = selected.layerId;
+  }
+  const current = project.layers.find(layer => layer.id === activeLayerId);
+  const list = $('#layer-list');
+  list.replaceChildren(...project.layers.slice().reverse().map(layer => {
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    row.dataset.active = String(layer.id === activeLayerId);
+    const choose = document.createElement('button');
+    choose.type = 'button';
+    choose.textContent = layer.id === activeLayerId ? '●' : '○';
+    choose.setAttribute('aria-label', `选择${layer.name}`);
+    choose.onclick = () => { activeLayerId = layer.id; opacityPreview = null; render(); };
+    const name = document.createElement('input');
+    name.value = layer.name;
+    name.maxLength = 40;
+    name.setAttribute('aria-label', '图层名称');
+    name.addEventListener('focus', () => {
+      if (activeLayerId === layer.id) return;
+      activeLayerId = layer.id;
+      for (const item of list.children) {
+        item.dataset.active = String(item === row);
+        item.querySelector('button').textContent = item === row ? '●' : '○';
+      }
+      const index = project.layers.findIndex(item => item.id === layer.id);
+      $('#layer-up').disabled = index === project.layers.length - 1;
+      $('#layer-down').disabled = index === 0;
+      $('#layer-opacity').value = Math.round((layer.opacity ?? 1) * 100);
+      $('#opacity-value').value = `${$('#layer-opacity').value}%`;
+    });
+    name.addEventListener('change', () => {
+      const value = name.value.trim() || layer.name;
+      if (value !== layer.name) commit({...project, layers: project.layers.map(item => item.id === layer.id ? {...item, name: value} : item)});
+      else render();
+    });
+    const count = document.createElement('small');
+    count.textContent = String(project.marks.filter(mark => mark.layerId === layer.id).length + Number(Boolean(project.reference) && project.referenceLayerId === layer.id));
+    row.append(choose, name, count);
+    return row;
+  }));
+  const index = project.layers.findIndex(layer => layer.id === activeLayerId);
+  $('#layer-up').disabled = index === project.layers.length - 1;
+  $('#layer-down').disabled = index <= 0;
+  $('#delete-layer').disabled = project.layers.length <= 1;
+  const percent = Math.round((current?.opacity ?? 1) * 100);
+  $('#layer-opacity').value = percent;
+  $('#opacity-value').value = `${percent}%`;
 }
 
 function render() {
   paintBoard();
   renderLegend();
+  renderLayers();
   $('#undo').disabled = !undo.length;
   $('#redo').disabled = !redo.length;
   const cards = project.marks.filter(mark => mark.shape !== 'pen' || mark.label || mark.value !== null ||
     mark.direction || mark.question || mark.confirmed);
+  $('#annotation-count').textContent = cards.length;
   annotations.replaceChildren(...cards.map(mark => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -138,7 +199,7 @@ function render() {
       question.textContent = mark.question;
       button.append(question);
     }
-    button.addEventListener('click', () => openEdit(mark));
+    button.addEventListener('click', () => mark.shape === 'text' ? beginText(mark) : openEdit(mark));
     return button;
   }));
   if (!cards.length) {
@@ -150,12 +211,14 @@ function render() {
 }
 
 function apply(next) {
-  project = next;
+  project = normalizeProject(next);
+  if (!project.layers.some(layer => layer.id === activeLayerId)) activeLayerId = project.layers.at(-1).id;
+  const projectSnapshot = project;
   const current = ++revision;
   status.dataset.state = 'saving';
   status.textContent = '正在保存到此设备…';
   render();
-  pendingSave = pendingSave.then(() => saveProject(next)).then(() => {
+  pendingSave = pendingSave.then(() => saveProject(projectSnapshot)).then(() => {
     if (revision !== current) return;
     status.dataset.state = 'saved';
     status.textContent = '草稿已保存在此设备';
@@ -187,6 +250,7 @@ function redoChange() {
 
 function openEdit(mark) {
   selection = mark.id;
+  activeLayerId = mark.layerId;
   editMark = mark;
   render();
   for (const name of ['label', 'kind', 'value', 'unit', 'direction', 'question']) {
@@ -206,26 +270,123 @@ function addMark(mark) {
   commit({...project, marks: [...project.marks, mark]});
 }
 
+function positionText() {
+  if (!inlineText) return;
+  const point = new DOMPoint(...inlineText.mark.a).matrixTransform(board.getScreenCTM());
+  const wrap = board.parentElement.getBoundingClientRect();
+  const scale = board.getScreenCTM().a;
+  textInput.style.left = `${point.x - wrap.left}px`;
+  textInput.style.top = `${point.y - wrap.top}px`;
+  textInput.style.fontSize = `${22 * scale}px`;
+  textInput.style.color = markColor(inlineText.mark);
+  textInput.style.width = `${Math.max(80, Math.min(wrap.right - point.x - 12, 450))}px`;
+}
+
+function beginText(mark) {
+  if (inlineText) finishText();
+  const existing = project.marks.some(item => item.id === mark.id);
+  inlineText = {mark, existing};
+  selection = mark.id;
+  activeLayerId = mark.layerId;
+  // Hide the saved text while editing to leave a single caret and text layer.
+  drawing = {mark: null};
+  paintBoard();
+  board.querySelector(`[data-id="${mark.id}"]`)?.setAttribute('visibility', 'hidden');
+  textInput.value = mark.label;
+  textInput.hidden = false;
+  positionText();
+  textInput.focus();
+  if (existing) textInput.select();
+}
+
+function finishText(cancel = false) {
+  if (!inlineText) return;
+  const {mark, existing} = inlineText;
+  board.querySelector(`[data-id="${mark.id}"]`)?.removeAttribute('visibility');
+  const label = textInput.value.trim();
+  inlineText = null;
+  drawing = null;
+  textInput.hidden = true;
+  if (!cancel && !label && existing) {
+    selection = null;
+    commit({...project, marks: project.marks.filter(item => item.id !== mark.id)});
+  } else if (!cancel && label && label !== mark.label) {
+    const updated = {...mark, label};
+    if (existing) commit({...project, marks: project.marks.map(item => item.id === mark.id ? updated : item)});
+    else addMark(updated);
+  } else {
+    if (!existing) selection = null;
+    render();
+  }
+}
+
+textInput.addEventListener('blur', () => finishText());
+textInput.addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  if (event.key === 'Enter') { event.preventDefault(); finishText(); }
+  if (event.key === 'Escape') { event.preventDefault(); finishText(true); }
+});
+
+const resizeBoard = () => {
+  const {width, height} = board.getBoundingClientRect();
+  if (!width || !height) return;
+  // Keep marks made near the edges visible when the window changes shape.
+  let halfWidth = 480;
+  let halfHeight = 300;
+  for (const mark of project?.marks ?? []) {
+    for (const point of [mark.a, mark.b, ...(mark.points ?? [])].filter(Boolean)) {
+      halfWidth = Math.max(halfWidth, Math.abs(point[0] - 480) + 24);
+      halfHeight = Math.max(halfHeight, Math.abs(point[1] - 300) + 24);
+    }
+  }
+  const viewWidth = Math.max(halfWidth * 2, halfHeight * 2 * width / height);
+  const viewHeight = Math.max(halfHeight * 2, halfWidth * 2 * height / width);
+  board.setAttribute('viewBox', `${(960 - viewWidth) / 2} ${(600 - viewHeight) / 2} ${viewWidth} ${viewHeight}`);
+  positionText();
+  if (project) paintBoard();
+};
+new ResizeObserver(resizeBoard).observe(board);
+
+function translatedMark(mark, dx, dy) {
+  const move = point => [point[0] + dx, point[1] + dy];
+  return {...mark, ...(mark.a ? {a: move(mark.a)} : {}), ...(mark.b ? {b: move(mark.b)} : {}),
+    ...(mark.points ? {points: mark.points.map(move)} : {})};
+}
+
 board.addEventListener('pointerdown', event => {
   if (!project || drawing || !event.isPrimary || event.button !== 0) return;
   const point = boardPoint(board, event);
   if (tool === 'select') {
     const group = event.target.closest('[data-id]');
     const mark = project.marks.find(item => item.id === group?.dataset.id);
-    if (mark) openEdit(mark);
-    else {
-      selection = null;
-      render();
-    }
+    if (!mark) { selection = null; render(); return; }
+    event.preventDefault();
+    selection = mark.id;
+    activeLayerId = mark.layerId;
+    board.setPointerCapture(event.pointerId);
+    drawing = {mode: 'move', id: event.pointerId, original: mark, mark, start: point, client: [event.clientX, event.clientY], moved: false};
+    render();
     return;
   }
   if (tool === 'text') {
-    openEdit(startMark('text', {a: point}));
+    const group = event.target.closest('[data-id]');
+    const mark = project.marks.find(item => item.id === group?.dataset.id && item.shape === 'text');
+    event.preventDefault();
+    beginText(mark || startMark('text', {a: point}));
     return;
   }
   board.setPointerCapture(event.pointerId);
   drawing = {id: event.pointerId, mark: startMark(tool, tool === 'pen' ? {points: [point]} : {a: point, b: point})};
   paintBoard();
+});
+
+board.addEventListener('dblclick', event => {
+  if (tool !== 'select') return;
+  const group = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-id]');
+  const mark = project.marks.find(item => item.id === group?.dataset.id);
+  if (!mark) return;
+  if (mark.shape === 'text') beginText(mark);
+  else openEdit(mark);
 });
 
 function extendStroke(event) {
@@ -243,12 +404,24 @@ function extendStroke(event) {
 
 board.addEventListener('pointermove', event => {
   if (drawing?.id !== event.pointerId) return;
-  extendStroke(event);
+  if (drawing.mode === 'move') {
+    if (Math.hypot(event.clientX - drawing.client[0], event.clientY - drawing.client[1]) < 3 && !drawing.moved) return;
+    const point = boardPoint(board, event);
+    drawing.moved = true;
+    drawing.mark = translatedMark(drawing.original, point[0] - drawing.start[0], point[1] - drawing.start[1]);
+  } else extendStroke(event);
   paintBoard();
 });
 
 board.addEventListener('pointerup', event => {
   if (drawing?.id !== event.pointerId) return;
+  if (drawing.mode === 'move') {
+    const {original, mark, moved} = drawing;
+    drawing = null;
+    if (moved) commit({...project, marks: project.marks.map(item => item.id === original.id ? mark : item)});
+    else render();
+    return;
+  }
   extendStroke(event);
   const {mark} = drawing;
   drawing = null;
@@ -320,13 +493,83 @@ for (const menu of document.querySelectorAll('.menu')) {
     if (menu.open && !menu.contains(event.target)) menu.open = false;
   });
 }
-for (const dialog of [settingsDialog, $('#install-dialog')]) {
-  dialog.addEventListener('close', () => $('.header-actions summary').focus());
+$('#install-dialog').addEventListener('close', () => $('.top-left summary').focus());
+$('#toggle-layers').onclick = () => {
+  const panel = $('#layers-panel');
+  panel.hidden = !panel.hidden;
+  $('#toggle-layers').setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) { $('#inspector').hidden = true; $('#toggle-inspector').setAttribute('aria-expanded', 'false'); }
+};
+$('#close-layers').onclick = () => { $('#layers-panel').hidden = true; $('#toggle-layers').setAttribute('aria-expanded', 'false'); };
+$('#add-layer').onclick = () => {
+  let number = 1;
+  while (project.layers.some(layer => layer.name === `图层 ${number}`)) number++;
+  const layer = newLayer(`图层 ${number}`);
+  activeLayerId = layer.id;
+  commit({...project, layers: [...project.layers, layer]});
+};
+function reorderLayer(direction) {
+  const layers = [...project.layers];
+  const from = layers.findIndex(layer => layer.id === activeLayerId);
+  const to = from + direction;
+  if (to < 0 || to >= layers.length) return;
+  [layers[from], layers[to]] = [layers[to], layers[from]];
+  commit({...project, layers});
 }
+$('#layer-up').onclick = () => reorderLayer(1);
+$('#layer-down').onclick = () => reorderLayer(-1);
+$('#delete-layer').onclick = () => {
+  if (project.layers.length <= 1) return;
+  const index = project.layers.findIndex(layer => layer.id === activeLayerId);
+  const removed = activeLayerId;
+  const target = project.layers[index - 1] ?? project.layers[index + 1];
+  activeLayerId = target.id;
+  commit({...project, layers: project.layers.filter(layer => layer.id !== removed),
+    referenceLayerId: project.referenceLayerId === removed ? target.id : project.referenceLayerId,
+    marks: project.marks.map(mark => mark.layerId === removed ? {...mark, layerId: target.id} : mark)});
+};
+$('#layer-opacity').addEventListener('input', event => {
+  opacityPreview = {id: activeLayerId, value: Number(event.target.value) / 100};
+  $('#opacity-value').value = `${event.target.value}%`;
+  paintBoard();
+});
+$('#layer-opacity').addEventListener('change', () => {
+  if (!opacityPreview) return;
+  const {id, value} = opacityPreview;
+  opacityPreview = null;
+  if ((project.layers.find(layer => layer.id === id)?.opacity ?? 1) !== value) {
+    commit({...project, layers: project.layers.map(layer => layer.id === id ? {...layer, opacity: value} : layer)});
+  } else render();
+});
+$('#object-layer').onchange = event => {
+  const id = event.target.value;
+  activeLayerId = id;
+  commit({...project, marks: project.marks.map(mark => mark.id === selection ? {...mark, layerId: id} : mark)});
+};
+$('#edit-selected').onclick = () => {
+  const mark = project.marks.find(item => item.id === selection);
+  if (!mark) return;
+  if (mark.shape === 'text') beginText(mark);
+  else openEdit(mark);
+};
+$('#delete-selected').onclick = () => {
+  const id = selection;
+  if (!id) return;
+  selection = null;
+  commit({...project, marks: project.marks.filter(mark => mark.id !== id)});
+};
+
+$('#toggle-inspector').onclick = () => {
+  const panel = $('#inspector');
+  panel.hidden = !panel.hidden;
+  $('#toggle-inspector').setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) { $('#layers-panel').hidden = true; $('#toggle-layers').setAttribute('aria-expanded', 'false'); }
+};
+$('#close-inspector').onclick = () => { $('#inspector').hidden = true; $('#toggle-inspector').setAttribute('aria-expanded', 'false'); };
 $('#undo').onclick = undoChange;
 $('#redo').onclick = redoChange;
 document.addEventListener('keydown', event => {
-  if (!project || document.querySelector('dialog[open]') || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
+  if (!project || inlineText || document.querySelector('dialog[open]') || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
   event.preventDefault();
   if (event.shiftKey) redoChange();
   else undoChange();
@@ -334,7 +577,7 @@ document.addEventListener('keydown', event => {
 
 function replaceCanvas(next) {
   selection = null;
-  analysisStatus.textContent = '';
+  notice.textContent = '';
   commit(next);
 }
 
@@ -349,12 +592,12 @@ $('#image-file').onchange = async event => {
   try {
     const reference = await readReference(file);
     if (start !== revision) {
-      analysisStatus.textContent = '导入时草图已更新，请重新选择图片。';
+      notice.textContent = '导入时草图已更新，请重新选择图片。';
       return;
     }
     replaceCanvas({...emptyProject(), reference});
   } catch {
-    analysisStatus.textContent = '无法打开该图片，请选择可预览的 PNG、JPEG 或 WebP。';
+    notice.textContent = '无法打开该图片，请选择可预览的 PNG、JPEG 或 WebP。';
   }
 };
 
@@ -371,78 +614,34 @@ function snapshot(state = project) {
   return copy;
 }
 
+$('#copy-image').onclick = async () => {
+  if (!navigator.clipboard?.write || !window.ClipboardItem) {
+    notice.textContent = '当前浏览器不支持复制图片，请使用「文件 → 导出 PNG」。';
+    return;
+  }
+  try {
+    const image = bitmap(snapshot()).then(data => fetch(data)).then(response => response.blob());
+    await navigator.clipboard.write([new ClipboardItem({'image/png': image})]);
+    notice.textContent = '画布图片已复制到剪贴板。';
+  } catch {
+    notice.textContent = '复制图片失败，请检查浏览器的剪贴板权限，或使用「文件 → 导出 PNG」。';
+  }
+};
+
 $('#export-png').onclick = async () => {
   try {
     download(await bitmap(snapshot()), 'sim-sketch.png');
   } catch {
-    analysisStatus.textContent = 'PNG 导出失败。';
+    notice.textContent = 'PNG 导出失败。';
   }
 };
 $('#export-json').onclick = () => {
-  const output = {version: 1, coordinateSystem: 'image-pixels', width: 960, height: 600, ...project,
+  const view = board.viewBox.baseVal;
+  const output = {version: 1, coordinateSystem: 'image-pixels', width: 960, height: 600, viewBox: [view.x, view.y, view.width, view.height], ...project,
     legend: markLegend(project.marks), marks: project.marks.map(mark => ({...mark, color: markColor(mark)}))};
   const url = URL.createObjectURL(new Blob([JSON.stringify(output, null, 2)], {type: 'application/json'}));
   download(url, 'sim-sketch.json');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
-function showSettings() {
-  for (const name of ['endpoint', 'model', 'key']) settingsForm.elements[name].value = modelSettings[name];
-  settingsDialog.showModal();
-}
-
-$('#settings').onclick = showSettings;
-settingsForm.elements.endpoint.addEventListener('input', () => settingsForm.elements.endpoint.setCustomValidity(''));
-settingsForm.onsubmit = event => {
-  event.preventDefault();
-  const data = new FormData(settingsForm);
-  const endpoint = new URL(data.get('endpoint'));
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
-  if (endpoint.protocol !== 'https:' && !(loopback && endpoint.protocol === 'http:')) {
-    settingsForm.elements.endpoint.setCustomValidity('请输入 HTTPS 接口或本机 HTTP 环回地址。');
-    settingsForm.elements.endpoint.reportValidity();
-    return;
-  }
-  modelSettings = {endpoint: endpoint.href, model: data.get('model').trim(), key: data.get('key').trim()};
-  try {
-    localStorage.setItem('sim-sketch:model', JSON.stringify({endpoint: modelSettings.endpoint, model: modelSettings.model}));
-  } catch {
-    analysisStatus.textContent = '模型设置将在当前页面使用。';
-  }
-  settingsDialog.close();
-};
-
-analyze.onclick = async () => {
-  if (!navigator.onLine) {
-    analysisStatus.textContent = '当前离线，恢复连接后可使用 AI。';
-    return;
-  }
-  if (!modelSettings.endpoint || !modelSettings.model) {
-    showSettings();
-    return;
-  }
-  const start = revision;
-  const input = {...project, marks: project.marks.filter(mark => mark.source !== 'ai' || mark.confirmed)};
-  analyze.disabled = true;
-  analysisStatus.textContent = '正在分析草图和标注…';
-  try {
-    const image = await bitmap(snapshot(input), 'image/jpeg');
-    const marks = await interpretSketch(modelSettings, image, input.marks);
-    if (revision !== start) {
-      analysisStatus.textContent = '草图已修改，请重新读图。';
-      return;
-    }
-    selection = marks[0]?.id ?? null;
-    if (marks.length || input.marks.length !== project.marks.length) {
-      commit({...project, marks: [...input.marks, ...marks]});
-    }
-    analysisStatus.textContent = marks.length ? `识别到 ${marks.length} 个标注，点击查看和修正。` : '没有识别到新的约束或载荷。';
-  } catch (error) {
-    analysisStatus.textContent = revision === start ?
-      `读图失败。请检查模型地址、密钥和跨域权限。 ${error.message}` : '草图已修改，请重新读图。';
-  } finally {
-    analyze.disabled = false;
-  }
 };
 
 let installPrompt;
@@ -463,9 +662,7 @@ $('#install').onclick = async () => {
 
 function showRenderer(mode) {
   const active = mode === 'WebGPU';
-  if (rendererStatus.textContent === mode) return;
   board.parentElement.dataset.gpu = String(active);
-  rendererStatus.textContent = mode;
 }
 
 async function startRenderer() {
@@ -484,19 +681,21 @@ async function start() {
   try {
     const draft = await readProject();
     if (draft) {
-      project = draft;
+      project = normalizeProject(draft);
+      activeLayerId = project.layers.at(-1).id;
       status.dataset.state = 'saved';
       status.textContent = '草稿已保存在此设备';
       render();
     } else apply(demoProject());
   } catch {
-    project = demoProject();
+    project = normalizeProject(demoProject());
+    activeLayerId = project.layers.at(-1).id;
     status.textContent = '此浏览器无法保存草稿，可以导出';
     render();
   }
   setTool(tool);
   $('main').inert = false;
-  $('.header-actions').inert = false;
+  resizeBoard();
   void startRenderer();
 
   if (!('serviceWorker' in navigator)) return;
@@ -512,7 +711,7 @@ async function start() {
         navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), {once: true});
         registration.waiting?.postMessage('activate-update');
       };
-      $('.project-actions').prepend(button);
+      $('.top-left').append(button);
     };
     offerUpdate();
     registration.addEventListener('updatefound', () => registration.installing?.addEventListener('statechange', offerUpdate));

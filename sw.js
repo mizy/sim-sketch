@@ -1,11 +1,11 @@
-const cacheName = 'sim-sketch-shell-v7';
+const cacheName = 'sim-sketch-shell-v19';
 const shell = [
-  './', './index.html', './style.css', './app.js', './board.js', './project.js', './vision.js', './gpu-board.js',
+  './', './index.html', './style.css', './app.js', './board.js', './project.js', './gpu-board.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './maskable.png'
 ].map(path => new URL(path, self.registration.scope).href);
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(shell)));
+  event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(shell)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

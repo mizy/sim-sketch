@@ -22,79 +22,66 @@
     <symbol id="i-redo" viewBox="0 0 24 24"><path d="m16 5 4 4-4 4m4-4H9a5 5 0 0 0 0 10h2"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="1.4"/><path d="m4 17 5-4 4 3 4-5 4 4"/></symbol>
     <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
-    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 2c.8 6 4 9.2 10 10-6 .8-9.2 4-10 10-.8-6-4-9.2-10-10 6-.8 9.2-4 10-10Z"/></symbol>
   </svg>
-  <header class="header">
-    <div class="shell">
-      <div class="brand"><img src="./icon.svg" width="34" height="34" alt=""><strong>SimSketch</strong><span>仿真草图</span></div>
-      <div class="header-actions" inert>
-        <details class="menu">
-          <summary class="icon-action" title="应用设置" aria-label="应用设置"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></summary>
-          <div class="menu-popup"><button id="settings">模型设置</button><button id="install">安装应用</button></div>
-        </details>
-        <button id="import" class="primary"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg>导入图片</button>
-        <input id="image-file" type="file" accept="image/*" hidden>
+  <main class="workspace" inert>
+    <div class="board-wrap">
+      <canvas id="gpu-board" aria-hidden="true"></canvas>
+      <svg id="board" viewBox="0 0 960 600" aria-label="绘图区域" role="img" xmlns="http://www.w3.org/2000/svg"></svg>
+      <input id="canvas-text" type="text" maxlength="140" aria-label="画布文字" placeholder="输入文字" hidden>
+    </div>
+    <div class="top-left floating">
+      <div class="brand"><img src="./icon.svg" width="30" height="30" alt=""><strong>SimSketch</strong></div>
+      <span class="separator"></span>
+      <details class="menu">
+        <summary title="文件菜单">文件</summary>
+        <div class="menu-popup align-left"><button id="new">新建空白</button><button id="demo">支架示例</button><button id="import">导入图片</button><button id="export-png">导出 PNG</button><button id="export-json">导出 JSON</button><button id="install">安装应用</button></div>
+      </details>
+      <input id="image-file" type="file" accept="image/*" hidden>
+      <span class="separator"></span>
+      <div class="history" role="group" aria-label="绘图历史">
+        <button class="icon-action" id="undo" title="撤销" aria-label="撤销"><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg></button>
+        <button class="icon-action" id="redo" title="重做" aria-label="重做"><svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg></button>
       </div>
     </div>
-  </header>
-  <main inert>
-    <div class="project">
-      <div class="project-title"><h1>仿真草图</h1><p id="status" role="status">正在读取草稿…</p></div>
-      <div class="project-actions"><button id="demo" class="quiet">支架示例</button><button id="new">新建空白</button></div>
+    <div class="top-right">
+      <span id="status" role="status">正在读取草稿…</span>
+      <button id="copy-image" class="floating" title="复制画布图片" aria-label="复制画布图片"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>复制图片</span></button>
+      <button id="toggle-layers" class="floating" aria-expanded="false" aria-controls="layers-panel">图层</button>
+      <button id="toggle-inspector" class="floating" aria-expanded="false" aria-controls="inspector">标注 <span id="annotation-count">0</span></button>
     </div>
-    <div class="workspace">
-      <section class="palette-panel" aria-labelledby="palette-title">
-        <h2 id="palette-title">仿真标注</h2>
-        <div class="palette" role="group" aria-label="画笔颜色">
-          <div class="palette-heading"><span>画笔颜色</span><strong id="brush-label">自动</strong></div>
-          <div class="color-wells">
-            <div id="preset-colors"></div>
-            <label class="custom-brush" title="自定义画笔颜色">
-              <span aria-hidden="true">＋</span>
-              <input id="custom-color" type="color" value="#b84984" aria-label="选择自定义画笔颜色">
-            </label>
-          </div>
-        </div>
-      </section>
-      <section class="studio" aria-label="草图画板">
-        <div class="studio-top">
-          <h2>画板</h2>
-          <div class="history" role="group" aria-label="绘图历史">
-            <button class="icon-action" id="undo" title="撤销" aria-label="撤销"><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg></button>
-            <button class="icon-action" id="redo" title="重做" aria-label="重做"><svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg></button>
-          </div>
-          <span id="renderer" role="status"></span>
-        </div>
-        <div class="drawing-stage">
-          <div class="tool-group" role="group" aria-label="绘图工具">
-            <button data-tool="pen" aria-pressed="true" title="画笔" aria-label="画笔"><svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg><span>画笔</span></button>
-            <button data-tool="region" aria-pressed="false" title="圈选区域" aria-label="圈选"><svg class="icon" aria-hidden="true"><use href="#i-region"/></svg><span>圈选</span></button>
-            <button data-tool="arrow" aria-pressed="false" title="画载荷箭头" aria-label="箭头"><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg><span>箭头</span></button>
-            <button data-tool="text" aria-pressed="false" title="文字" aria-label="文字"><svg class="icon" aria-hidden="true"><use href="#i-text"/></svg><span>文字</span></button>
-            <button data-tool="select" aria-pressed="false" title="选择及编辑标注" aria-label="选择"><svg class="icon" aria-hidden="true"><use href="#i-select"/></svg><span>选择</span></button>
-          </div>
-          <div class="board-wrap">
-            <canvas id="gpu-board" aria-hidden="true"></canvas>
-            <svg id="board" viewBox="0 0 960 600" aria-label="绘图区域" role="img" xmlns="http://www.w3.org/2000/svg"></svg>
-          </div>
-        </div>
-        <div class="board-footer">
-          <div id="legend" class="legend" hidden><span>图例</span><ul id="legend-items" aria-label="画板颜色图例"></ul></div>
-          <span id="hint">在画板上拖动绘制</span>
-          <details class="menu export-menu">
-            <summary><svg class="icon" aria-hidden="true"><use href="#i-export"/></svg>导出</summary>
-            <div class="menu-popup"><button id="export-png">导出 PNG</button><button id="export-json">导出 JSON</button></div>
-          </details>
-        </div>
-      </section>
-      <aside class="inspector" aria-label="标注项">
-        <h2>标注项</h2>
-        <div id="annotations"></div>
-        <button class="primary analyze" id="analyze"><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg>AI 读图</button>
-        <p id="analysis-status" role="status"></p>
-      </aside>
+    <div class="tool-group floating" role="group" aria-label="绘图工具">
+      <button data-tool="select" aria-pressed="false" title="选择及编辑标注" aria-label="选择"><svg class="icon" aria-hidden="true"><use href="#i-select"/></svg><span>选择</span></button>
+      <button data-tool="pen" aria-pressed="true" title="画笔" aria-label="画笔"><svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg><span>画笔</span></button>
+      <button data-tool="region" aria-pressed="false" title="圈选区域" aria-label="圈选"><svg class="icon" aria-hidden="true"><use href="#i-region"/></svg><span>圈选</span></button>
+      <button data-tool="arrow" aria-pressed="false" title="画载荷箭头" aria-label="箭头"><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg><span>箭头</span></button>
+      <button data-tool="text" aria-pressed="false" title="文字" aria-label="文字"><svg class="icon" aria-hidden="true"><use href="#i-text"/></svg><span>文字</span></button>
     </div>
+    <section class="palette-panel floating" aria-label="画笔颜色">
+      <div class="palette-heading"><span>画笔颜色</span><strong id="brush-label">自动</strong></div>
+      <div class="color-wells"><div id="preset-colors"></div><label class="custom-brush" title="自定义画笔颜色"><span class="custom-swatch" aria-hidden="true">＋</span><span class="color-name">自定义</span><input id="custom-color" type="color" value="#b84984" aria-label="选择自定义画笔颜色"></label></div>
+    </section>
+    <div class="selection-actions floating" id="selection-actions" hidden>
+      <button id="edit-selected">编辑</button><button id="delete-selected" title="删除选中的对象">删除</button>
+      <label for="object-layer">所在图层</label><select id="object-layer" aria-label="选中对象所在图层"></select>
+    </div>
+    <aside class="layers-panel floating" id="layers-panel" aria-label="图层" hidden>
+      <div class="inspector-heading"><h2>图层</h2><button id="close-layers" class="icon-action" aria-label="关闭图层">×</button></div>
+      <p class="layer-help">新绘制的内容会加入当前图层</p>
+      <div id="layer-list"></div>
+      <div class="layer-actions"><button id="add-layer">＋ 新建图层</button><button id="layer-up" title="上移当前图层" aria-label="上移当前图层">↑</button><button id="layer-down" title="下移当前图层" aria-label="下移当前图层">↓</button><button id="delete-layer" title="删除图层，对象移入相邻图层" aria-label="删除当前图层">删除</button></div>
+      <label class="layer-opacity" for="layer-opacity"><span>不透明度</span><output id="opacity-value">100%</output></label>
+      <input id="layer-opacity" type="range" min="0" max="100" step="1" aria-label="当前图层不透明度">
+    </aside>
+    <aside class="inspector floating" id="inspector" aria-label="标注项" hidden>
+      <div class="inspector-heading"><h2>标注项</h2><button id="close-inspector" class="icon-action" aria-label="关闭标注列表">×</button></div>
+      <div id="annotations"></div>
+    </aside>
+    <div class="bottom-info"><span id="hint">在画布上拖动绘制</span></div>
+    <div id="notice" class="notice floating" role="status"></div>
+    <div id="legend" hidden><ul id="legend-items"></ul></div>
+    <div class="project-actions" hidden></div>
   </main>
   <dialog id="edit-dialog">
     <form id="edit-form">
@@ -113,16 +100,6 @@
       <label>待确认事项<input name="question" maxlength="200"></label>
       <label class="check"><input name="confirmed" type="checkbox">已确认</label>
       <div class="dialog-actions"><button class="danger" type="button" id="delete-mark">删除</button><span></span><button type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div>
-    </form>
-  </dialog>
-  <dialog id="settings-dialog">
-    <form id="settings-form">
-      <h2>模型设置</h2>
-      <p>点击「AI 读图」时，草图和标注会发往所选服务。密钥仅保留在当前页面。</p>
-      <label>Chat Completions 接口<input name="endpoint" type="url" required placeholder="https://api.example.com/v1/chat/completions"></label>
-      <label>支持图片的模型<input name="model" required placeholder="填写服务端模型名"></label>
-      <label>API 密钥<input name="key" type="password" autocomplete="off" placeholder="服务要求时填写"></label>
-      <div class="dialog-actions"><span></span><button type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div>
     </form>
   </dialog>
   <dialog id="install-dialog"><section><h2>安装 SimSketch</h2><p>iPhone / iPad：在 Safari 分享菜单中选「添加到主屏幕」，并开启「作为网页 App 打开」。</p><p>Android 或桌面 Chrome / Edge：在浏览器菜单中选择安装应用。Mac Safari 也可以「添加到程序坞」。</p><div class="dialog-actions"><span></span><button class="primary" data-close>完成</button></div></section></dialog>

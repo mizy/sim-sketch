@@ -43,12 +43,12 @@ export function demoProject() {
 }
 
 export const markKinds = {
-  fixed: {label: '固定约束', color: '#75dcb8'},
-  force: {label: '力', color: '#c5b6ff'},
-  pressure: {label: '压力', color: '#8dd5ff'},
-  structure: {label: '结构', color: '#ff9b87'},
-  note: {label: '备注', color: '#fbcc81'},
-  other: {label: '其他条件', color: '#c5cdd9'}
+  fixed: {label: '固定约束', color: '#087b72'},
+  force: {label: '力', color: '#713ad0'},
+  pressure: {label: '压力', color: '#2766c5'},
+  structure: {label: '结构', color: '#b74730'},
+  note: {label: '备注', color: '#9f6415'},
+  other: {label: '其他条件', color: '#65748e'}
 };
 
 export function markColor(mark) {

@@ -1,4 +1,9 @@
-import {markGeometry, referenceCanvas} from './board.js';
+import {markGeometry, paper, referenceCanvas} from './board.js';
+
+function rgb(color) {
+  const value = Number.parseInt(color.slice(1), 16);
+  return [value >> 16, (value >> 8) & 255, value & 255];
+}
 
 const shader = `
 const boardSize = vec2f(960, 600);
@@ -31,7 +36,7 @@ struct BackVertex {
   let distance = length(tile);
   let aa = max(length(fwidth(p)) * 0.5, 0.4);
   let dot = 1.0 - smoothstep(1.25 - aa, 1.25 + aa, distance);
-  let grid = mix(vec3f(21, 30, 42), vec3f(52, 68, 87), dot) / 255.0;
+  let grid = mix(vec3f(${rgb(paper.background)}), vec3f(${rgb(paper.dot)}), dot) / 255.0;
   let reference = textureSample(referenceImage, referenceSampler, input.uv);
   return vec4f(reference.rgb + grid * (1.0 - reference.a), 1);
 }
@@ -94,24 +99,23 @@ function packMarks(marks, temporary, selection) {
   const pack = (mark, selected) => {
     const style = markGeometry(mark, selected);
     if (!style.width) return;
-    const color = Number.parseInt(style.color.slice(1), 16);
-    const rgb = [color >> 16, (color >> 8) & 255, color & 255].map(value => value / 255);
+    const color = rgb(style.color).map(value => value / 255);
     if (style.center) {
-      instances.push(...style.center, ...style.radii, style.width, 1, style.fill, Number(style.dashed), ...rgb);
+      instances.push(...style.center, ...style.radii, style.width, 1, style.fill, Number(style.dashed), ...color);
       return;
     }
     const {points} = style;
     if (mark.shape === 'arrow') {
       const [a, b, left, , right] = points;
       for (const [from, to] of [[a, b], [b, left], [b, right]]) {
-        instances.push(...from, ...to, style.width, 0, 0, 0, ...rgb);
+        instances.push(...from, ...to, style.width, 0, 0, 0, ...color);
       }
       return;
     }
     for (let index = 0; index < Math.max(1, points.length - 1); index++) {
       const from = points[index];
       const to = points[index + 1] ?? from;
-      instances.push(...from, ...to, style.width, 0, 0, 0, ...rgb);
+      instances.push(...from, ...to, style.width, 0, 0, 0, ...color);
     }
   };
   for (const mark of marks) pack(mark, mark.id === selection);

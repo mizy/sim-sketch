@@ -16,7 +16,8 @@ const settingsForm = $('#settings-form');
 const analyze = $('#analyze');
 const presets = $('#preset-colors');
 const customColor = $('#custom-color');
-const customBrush = $('#use-custom-color');
+const customBrush = customColor.closest('label');
+const brushLabel = $('#brush-label');
 
 let project;
 let paintGpu;
@@ -53,7 +54,7 @@ function setTool(next) {
 function swatch(color) {
   const dot = document.createElement('span');
   dot.className = 'swatch';
-  dot.style.backgroundColor = color;
+  dot.style.setProperty('--swatch', color);
   dot.setAttribute('aria-hidden', 'true');
   return dot;
 }
@@ -63,20 +64,29 @@ function chooseBrush(next) {
   for (const button of presets.children) {
     button.setAttribute('aria-pressed', String(button.dataset.brush === brush));
   }
-  customBrush.setAttribute('aria-pressed', String(brush === 'custom'));
+  customBrush.dataset.selected = String(brush === 'custom');
+  customBrush.style.setProperty('--custom-fill', brush === 'custom' ? customColor.value : '#fff');
+  brushLabel.textContent = brush === 'custom' ? `自定义 ${customColor.value.toUpperCase()}` :
+    (markKinds[brush]?.label ?? '自动');
 }
 
 for (const [kind, style] of [['auto', {label: '自动'}], ...Object.entries(markKinds)]) {
   const button = document.createElement('button');
   button.type = 'button';
   button.dataset.brush = kind;
+  button.className = 'color-well';
+  button.setAttribute('aria-label', style.label);
+  button.title = style.label;
   if (style.color) button.append(swatch(style.color));
-  button.append(style.label);
+  else {
+    const automatic = swatch('#fff');
+    automatic.classList.add('auto-swatch');
+    button.append(automatic);
+  }
   button.addEventListener('click', () => chooseBrush(kind));
   presets.append(button);
   if (kind !== 'auto') editForm.elements.kind.add(new Option(style.label, kind));
 }
-customBrush.addEventListener('click', () => chooseBrush('custom'));
 customColor.addEventListener('input', () => chooseBrush('custom'));
 chooseBrush('auto');
 
@@ -142,10 +152,13 @@ function render() {
 function apply(next) {
   project = next;
   const current = ++revision;
+  status.dataset.state = 'saving';
   status.textContent = '正在保存到此设备…';
   render();
   pendingSave = pendingSave.then(() => saveProject(next)).then(() => {
-    if (revision === current) status.textContent = '草稿已保存在此设备';
+    if (revision !== current) return;
+    status.dataset.state = 'saved';
+    status.textContent = '草稿已保存在此设备';
   }).catch(() => {
     if (revision === current) status.textContent = '草稿保存失败，请导出以保留修改';
   });
@@ -290,6 +303,26 @@ $('#delete-mark').onclick = () => {
 
 for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => button.closest('dialog').close();
 for (const button of document.querySelectorAll('button[data-tool]')) button.onclick = () => setTool(button.dataset.tool);
+for (const menu of document.querySelectorAll('.menu')) {
+  const summary = menu.querySelector('summary');
+  menu.addEventListener('click', event => {
+    if (event.target.closest('button')) {
+      menu.open = false;
+      if (!document.querySelector('dialog[open]')) summary.focus();
+    }
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !menu.open) return;
+    menu.open = false;
+    summary.focus();
+  });
+  document.addEventListener('pointerdown', event => {
+    if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+}
+for (const dialog of [settingsDialog, $('#install-dialog')]) {
+  dialog.addEventListener('close', () => $('.header-actions summary').focus());
+}
 $('#undo').onclick = undoChange;
 $('#redo').onclick = redoChange;
 document.addEventListener('keydown', event => {
@@ -452,6 +485,7 @@ async function start() {
     const draft = await readProject();
     if (draft) {
       project = draft;
+      status.dataset.state = 'saved';
       status.textContent = '草稿已保存在此设备';
       render();
     } else apply(demoProject());

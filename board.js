@@ -1,6 +1,7 @@
 import {markColor} from './project.js';
 
 const namespace = 'http://www.w3.org/2000/svg';
+export const paper = {background: '#fbfcfe', dot: '#b6c3dd'};
 
 function svg(tag, attributes = {}, children = []) {
   const node = document.createElementNS(namespace, tag);
@@ -19,27 +20,27 @@ function demoGeometry() {
   group.innerHTML = `
     <defs>
       <linearGradient id="base" x2=".25" y2="1" gradientUnits="objectBoundingBox">
-        <stop stop-color="#7f97af"/><stop offset="1" stop-color="#526a84"/>
+        <stop stop-color="#dce5f1"/><stop offset="1" stop-color="#a8bdd6"/>
       </linearGradient>
     </defs>
-    <ellipse cx="492" cy="454" rx="307" ry="56" fill="#0f1622" opacity=".7"/>
-    <path d="M260 368 300 335 681 335 770 391 717 440 319 440 260 403Z" fill="#354961" stroke="#9bb0c4" stroke-width="2"/>
-    <path d="M260 368 300 335 681 335 770 391 717 416 319 416Z" fill="url(#base)" stroke="#a9bdcf" stroke-width="2"/>
-    <path d="M319 416v24m398-24v24m53-49v19l-53 30" fill="none" stroke="#9bb0c4" stroke-width="2"/>
-    <path d="M273 187 318 151 412 198 412 356 366 396 273 353Z" fill="#435b74" stroke="#aac0d4" stroke-width="2"/>
-    <path d="M273 187 318 151 412 198 366 232Z" fill="#afc0d0" stroke="#bccddd" stroke-width="2"/>
-    <path d="M273 187 366 232 366 396 273 353Z" fill="url(#base)" stroke="#a9bed4" stroke-width="2"/>
-    <path d="M366 235 411 199 593 371 545 400 366 400Z" fill="#8099b2" stroke="#bdd0df" stroke-width="2"/>
-    <path d="M366 235 545 400 366 400Z" fill="#5e7893" stroke="#9fb8ce" stroke-width="2"/>
-    <g fill="#202e40" stroke="#b3c7d7" stroke-width="2">
+    <ellipse cx="492" cy="454" rx="307" ry="56" fill="#a7b8d1" opacity=".22"/>
+    <path d="M260 368 300 335 681 335 770 391 717 440 319 440 260 403Z" fill="#93abc6" stroke="#496583" stroke-width="2"/>
+    <path d="M260 368 300 335 681 335 770 391 717 416 319 416Z" fill="url(#base)" stroke="#4a6686" stroke-width="2"/>
+    <path d="M319 416v24m398-24v24m53-49v19l-53 30" fill="none" stroke="#496583" stroke-width="2"/>
+    <path d="M273 187 318 151 412 198 412 356 366 396 273 353Z" fill="#95acc8" stroke="#536c8b" stroke-width="2"/>
+    <path d="M273 187 318 151 412 198 366 232Z" fill="#edf1f7" stroke="#526b89" stroke-width="2"/>
+    <path d="M273 187 366 232 366 396 273 353Z" fill="url(#base)" stroke="#476583" stroke-width="2"/>
+    <path d="M366 235 411 199 593 371 545 400 366 400Z" fill="#d0dbea" stroke="#52708e" stroke-width="2"/>
+    <path d="M366 235 545 400 366 400Z" fill="#93aaca" stroke="#526b8a" stroke-width="2"/>
+    <g fill="#728aab" stroke="#496484" stroke-width="2">
       <ellipse cx="311" cy="241" rx="12" ry="16" transform="rotate(-20 311 241)"/>
       <ellipse cx="311" cy="325" rx="12" ry="16" transform="rotate(-20 311 325)"/>
       <ellipse cx="655" cy="377" rx="20" ry="8"/>
       <ellipse cx="703" cy="392" rx="20" ry="8"/>
     </g>
     <g transform="translate(85 506)" stroke-width="3" fill="none">
-      <path d="M0 0v-55" stroke="#dca8ff"/><path d="M0 0l64 6" stroke="#eba08d"/><path d="M0 0l-30 27" stroke="#8fd6b1"/>
-      <g font-size="16" font-family="system-ui" stroke="none"><text x="-5" y="-63" fill="#dca8ff">Z</text><text x="72" y="12" fill="#eba08d">X</text><text x="-44" y="39" fill="#8fd6b1">Y</text></g>
+      <path d="M0 0v-55" stroke="#3c58bd"/><path d="M0 0l64 6" stroke="#a84c31"/><path d="M0 0l-30 27" stroke="#197866"/>
+      <g font-size="16" font-family="system-ui" stroke="none"><text x="-5" y="-63" fill="#3c58bd">Z</text><text x="72" y="12" fill="#a84c31">X</text><text x="-44" y="39" fill="#197866">Y</text></g>
     </g>`;
   return group;
 }
@@ -111,7 +112,7 @@ function annotation(mark, selected) {
     const x = Math.max(4, Math.min(956 - width, anchor[0] + (mark.shape === 'arrow' ? 10 : 0)));
     const y = Math.min(591, Math.max(30, anchor[1] - 9));
     group.append(svg('rect', {x, y: y - 25, width, height: 34, rx: 7,
-      fill: '#151c2a', stroke: color, 'stroke-width': selected ? 2 : 1}));
+      fill: '#ffffff', stroke: color, 'stroke-width': selected ? 2 : 1}));
     group.append(svg('text', {x: x + 9, y, fill: color, 'font-size': 22,
       'font-family': 'system-ui, sans-serif', 'font-weight': 650}, [visibleLabel]));
   }
@@ -124,11 +125,11 @@ export function drawBoard(board, project, temporary = null, selected = null) {
   let layers = boardLayers.get(board);
   if (!layers) {
     const dots = svg('pattern', {id: 'grid', width: 24, height: 24, patternUnits: 'userSpaceOnUse'},
-      [svg('circle', {cx: 1.4, cy: 1.4, r: 1.25, fill: '#344457'})]);
+      [svg('circle', {cx: 1.4, cy: 1.4, r: 1.25, fill: paper.dot})]);
     const reference = svg('g', {class: 'board-geometry'});
     const marks = svg('g');
     board.replaceChildren(svg('defs', {}, [dots]),
-      svg('rect', {class: 'board-geometry', width: 960, height: 600, fill: '#151e2a'}),
+      svg('rect', {class: 'board-geometry', width: 960, height: 600, fill: paper.background}),
       svg('rect', {class: 'board-geometry', width: 960, height: 600, fill: 'url(#grid)'}),
       reference, marks);
     layers = {reference, marks};

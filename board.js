@@ -1,5 +1,6 @@
+import {markColor} from './project.js';
+
 const namespace = 'http://www.w3.org/2000/svg';
-const colors = {note: '#fbcc81', fixed: '#75dcb8', force: '#c5b6ff', pressure: '#8dd5ff', other: '#fbcc81'};
 
 function svg(tag, attributes = {}, children = []) {
   const node = document.createElementNS(namespace, tag);
@@ -44,7 +45,7 @@ function demoGeometry() {
 }
 
 export function markGeometry(mark, selected) {
-  const color = colors[mark.kind];
+  const color = markColor(mark);
   switch (mark.shape) {
     case 'pen':
       return {color, width: selected ? 6 : 4, points: mark.points};

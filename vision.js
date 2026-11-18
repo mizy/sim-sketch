@@ -1,4 +1,4 @@
-import {newMark, kindLabel} from './project.js';
+import {newMark, markColor, markKinds, markLegend} from './project.js';
 
 export async function interpretSketch(settings, image, marks) {
   const {endpoint, model, key} = settings;
@@ -10,14 +10,14 @@ export async function interpretSketch(settings, image, marks) {
       model,
       messages: [
         {role: 'system', content: `你是仿真草图解释器。解释图中用户手绘自由线、箭头、圈选、旁注、参考图和已有标注。
-区分固定约束、力、压力及其他。不根据视角推断模型坐标，不编造受力数值、单位、求解器面 ID。
+根据颜色图例和标注类型区分固定约束、力、压力、结构和其他条件。结构仅指用户标出的结构特征。不根据视角推断模型坐标，不编造受力数值、单位、求解器面 ID。
 区分总力和压力或均布载荷，明确写出来。遇到缺失或歧义时给一条可操作的中文问题，例如图中向下对应模型 −Z 还是重力方向。
 按区域归纳条件，保持条目精简。只有用户明确写出的方向才写进 direction。
 仅返回 JSON，格式为 {"items":[{"markId":null,"kind":"force","label":"右侧上表面 · 总载荷均布","value":500,"unit":"N","direction":"","question":"图中向下对应哪个模型方向？","box":[0.63,0.54,0.16,0.12]}]}。
-kind 取 fixed、force、pressure、other、note；未知数值用 null。box 是图像左上 x、y、宽、高，取 0 到 1。
+kind 取 fixed、force、pressure、structure、other、note；未知数值用 null。box 是图像左上 x、y、宽、高，取 0 到 1。
 可以关联已有笔画或标注时，markId 使用给定 ID；box 仍应贴合载荷或约束施加区域。避开已经确认的条目。没有可解释的条件时返回空数组。`},
         {role: 'user', content: [
-          {type: 'text', text: '已有标注（画板宽 960、高 600）：' + JSON.stringify(marks)},
+          {type: 'text', text: '已有标注（画板宽 960、高 600）：' + JSON.stringify({legend: markLegend(marks), marks: marks.map(mark => ({...mark, color: markColor(mark)}))})},
           {type: 'image_url', image_url: {url: image}}
         ]}
       ]
@@ -31,7 +31,7 @@ kind 取 fixed、force、pressure、other、note；未知数值用 null。box �
   if (!Array.isArray(items)) throw new Error('模型返回的标注格式不正确。');
   const result = [];
   for (const item of items.slice(0, 25)) {
-    if (!item || !Object.hasOwn(kindLabel, item.kind) || typeof item.label !== 'string' || !item.label.trim()) continue;
+    if (!item || !Object.hasOwn(markKinds, item.kind) || typeof item.label !== 'string' || !item.label.trim()) continue;
     const original = marks.find(mark => mark.id === item.markId);
     if (original?.confirmed) continue;
     let geometry;

@@ -1,5 +1,5 @@
 import {bitmap, boardPoint, drawBoard, readReference} from './board.js';
-import {demoProject, emptyProject, kindLabel, newMark, readProject, saveProject} from './project.js';
+import {demoProject, emptyProject, markColor, markKinds, markLegend, newMark, readProject, saveProject} from './project.js';
 import {createGpuBoard} from './gpu-board.js';
 import {interpretSketch} from './vision.js';
 
@@ -14,6 +14,9 @@ const editForm = $('#edit-form');
 const settingsDialog = $('#settings-dialog');
 const settingsForm = $('#settings-form');
 const analyze = $('#analyze');
+const presets = $('#preset-colors');
+const customColor = $('#custom-color');
+const customBrush = $('#use-custom-color');
 
 let project;
 let paintGpu;
@@ -21,6 +24,7 @@ let selection = null;
 let drawing = null;
 let editMark = null;
 let tool = 'pen';
+let brush = 'auto';
 let revision = 0;
 let pendingSave = Promise.resolve();
 const undo = [];
@@ -46,6 +50,53 @@ function setTool(next) {
   $('#hint').textContent = messages[next];
 }
 
+function swatch(color) {
+  const dot = document.createElement('span');
+  dot.className = 'swatch';
+  dot.style.backgroundColor = color;
+  dot.setAttribute('aria-hidden', 'true');
+  return dot;
+}
+
+function chooseBrush(next) {
+  brush = next;
+  for (const button of presets.children) {
+    button.setAttribute('aria-pressed', String(button.dataset.brush === brush));
+  }
+  customBrush.setAttribute('aria-pressed', String(brush === 'custom'));
+}
+
+for (const [kind, style] of [['auto', {label: '自动'}], ...Object.entries(markKinds)]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.brush = kind;
+  if (style.color) button.append(swatch(style.color));
+  button.append(style.label);
+  button.addEventListener('click', () => chooseBrush(kind));
+  presets.append(button);
+  if (kind !== 'auto') editForm.elements.kind.add(new Option(style.label, kind));
+}
+customBrush.addEventListener('click', () => chooseBrush('custom'));
+customColor.addEventListener('input', () => chooseBrush('custom'));
+chooseBrush('auto');
+
+function startMark(shape, geometry) {
+  const defaultKind = shape === 'arrow' ? 'force' : 'note';
+  const kind = Object.hasOwn(markKinds, brush) ? brush : defaultKind;
+  return newMark(shape, {...geometry, kind, ...(brush === 'custom' ? {color: customColor.value} : {})});
+}
+
+function renderLegend() {
+  const legend = markLegend(project.marks);
+  $('#legend').hidden = !legend.length;
+  $('#legend-items').replaceChildren(...legend.map(({color, labels}) => {
+    const item = document.createElement('li');
+    item.dataset.color = color;
+    item.append(swatch(color), labels.join(' / '));
+    return item;
+  }));
+}
+
 function paintBoard() {
   const temporary = drawing?.mark ?? null;
   drawBoard(board, project, temporary, selection);
@@ -54,18 +105,21 @@ function paintBoard() {
 
 function render() {
   paintBoard();
+  renderLegend();
   $('#undo').disabled = !undo.length;
   $('#redo').disabled = !redo.length;
-  const cards = project.marks.filter(mark => mark.shape !== 'pen' || mark.label || mark.kind !== 'note');
+  const cards = project.marks.filter(mark => mark.shape !== 'pen' || mark.label || mark.value !== null ||
+    mark.direction || mark.question || mark.confirmed);
   annotations.replaceChildren(...cards.map(mark => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'card';
     button.dataset.selected = String(selection === mark.id);
     const heading = document.createElement('strong');
-    heading.textContent = mark.label || kindLabel[mark.kind];
+    heading.textContent = mark.label || markKinds[mark.kind].label;
+    heading.prepend(swatch(markColor(mark)));
     const details = document.createElement('small');
-    details.textContent = [kindLabel[mark.kind], mark.value === null ? '' : `${mark.value} ${mark.unit}`.trim(),
+    details.textContent = [markKinds[mark.kind].label, mark.value === null ? '' : `${mark.value} ${mark.unit}`.trim(),
       mark.direction, mark.source === 'ai' ? 'AI 建议' : '', mark.confirmed ? '已确认' : ''].filter(Boolean).join(' · ');
     button.append(heading, details);
     if (mark.question && !mark.confirmed) {
@@ -126,6 +180,9 @@ function openEdit(mark) {
     editForm.elements[name].value = mark[name] ?? '';
   }
   editForm.elements.confirmed.checked = mark.confirmed;
+  editForm.elements.customColor.checked = Boolean(mark.color);
+  editForm.elements.color.value = markColor(mark);
+  editForm.elements.color.disabled = !editForm.elements.customColor.checked;
   $('#delete-mark').hidden = !project.marks.some(existing => existing.id === mark.id);
   editDialog.showModal();
   editForm.elements.label.focus();
@@ -150,12 +207,11 @@ board.addEventListener('pointerdown', event => {
     return;
   }
   if (tool === 'text') {
-    openEdit(newMark('text', {a: point}));
+    openEdit(startMark('text', {a: point}));
     return;
   }
   board.setPointerCapture(event.pointerId);
-  drawing = {id: event.pointerId, mark: tool === 'pen' ? newMark('pen', {points: [point]}) :
-    newMark(tool, {a: point, b: point, kind: tool === 'arrow' ? 'force' : 'note'})};
+  drawing = {id: event.pointerId, mark: startMark(tool, tool === 'pen' ? {points: [point]} : {a: point, b: point})};
   paintBoard();
 });
 
@@ -206,11 +262,21 @@ editForm.addEventListener('submit', event => {
   const mark = {...editMark, kind: data.get('kind'), label: data.get('label').trim(),
     value: data.get('value') === '' ? null : Number(data.get('value')), unit: data.get('unit').trim(),
     direction: data.get('direction').trim(), question: data.get('question').trim(), confirmed: data.has('confirmed')};
+  if (data.has('customColor')) mark.color = data.get('color');
+  else delete mark.color;
   if (project.marks.some(existing => existing.id === mark.id)) {
     commit({...project, marks: project.marks.map(existing => existing.id === mark.id ? mark : existing)});
   } else addMark(mark);
   editDialog.close();
 });
+
+function syncEditColor() {
+  const fields = editForm.elements;
+  fields.color.disabled = !fields.customColor.checked;
+  if (fields.color.disabled) fields.color.value = markKinds[fields.kind.value].color;
+}
+editForm.elements.kind.addEventListener('change', syncEditColor);
+editForm.elements.customColor.addEventListener('change', syncEditColor);
 
 editForm.elements.label.addEventListener('input', () => editForm.elements.label.setCustomValidity(''));
 editForm.elements.value.addEventListener('input', () => editForm.elements.label.setCustomValidity(''));
@@ -280,7 +346,8 @@ $('#export-png').onclick = async () => {
   }
 };
 $('#export-json').onclick = () => {
-  const output = {version: 1, coordinateSystem: 'image-pixels', width: 960, height: 600, ...project};
+  const output = {version: 1, coordinateSystem: 'image-pixels', width: 960, height: 600, ...project,
+    legend: markLegend(project.marks), marks: project.marks.map(mark => ({...mark, color: markColor(mark)}))};
   const url = URL.createObjectURL(new Blob([JSON.stringify(output, null, 2)], {type: 'application/json'}));
   download(url, 'sim-sketch.json');
   setTimeout(() => URL.revokeObjectURL(url), 1000);

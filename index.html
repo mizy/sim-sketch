@@ -38,11 +38,17 @@
           </div>
           <div class="tool-group history" role="group" aria-label="绘图历史"><button id="undo" title="撤销" aria-label="撤销">↶</button><button id="redo" title="重做" aria-label="重做">↷</button></div>
         </div>
+        <div class="palette" role="group" aria-label="画笔颜色">
+          <span class="palette-label">画笔颜色</span>
+          <div id="preset-colors"></div>
+          <div class="custom-brush"><button type="button" id="use-custom-color" aria-pressed="false">自定义</button><input id="custom-color" type="color" value="#f28ec5" aria-label="选择自定义画笔颜色"></div>
+        </div>
         <div class="board-wrap">
           <canvas id="gpu-board" aria-hidden="true"></canvas>
           <svg id="board" viewBox="0 0 960 600" aria-label="绘图区域" role="img" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
         <div class="board-footer"><span id="hint">在画板上拖动绘制</span><span id="renderer" role="status"></span><button class="quiet" id="export-png">导出 PNG</button></div>
+        <div id="legend" class="legend" hidden><span>图例</span><ul id="legend-items" aria-label="画板颜色图例"></ul></div>
       </section>
       <aside class="inspector" aria-label="仿真标注">
         <div class="inspector-top"><h2>仿真标注</h2><button class="quiet" id="export-json">导出 JSON</button></div>
@@ -55,7 +61,11 @@
   <dialog id="edit-dialog">
     <form id="edit-form">
       <h2 id="edit-title">编辑标注</h2>
-      <label>类型<select name="kind"><option value="note">备注</option><option value="fixed">固定约束</option><option value="force">力</option><option value="pressure">压力</option><option value="other">其他条件</option></select></label>
+      <label>类型<select name="kind"></select></label>
+      <div class="color-edit">
+        <label class="check"><input name="customColor" type="checkbox">自定义颜色</label>
+        <input name="color" type="color" aria-label="标注颜色">
+      </div>
       <label>标注<input name="label" maxlength="140" placeholder="例如：右侧上表面"></label>
       <div class="form-row">
         <label>数值<input name="value" type="number" step="any" inputmode="decimal"></label>

@@ -42,4 +42,26 @@ export function demoProject() {
   };
 }
 
-export const kindLabel = {note: '备注', fixed: '固定约束', force: '力', pressure: '压力', other: '其他条件'};
+export const markKinds = {
+  fixed: {label: '固定约束', color: '#75dcb8'},
+  force: {label: '力', color: '#c5b6ff'},
+  pressure: {label: '压力', color: '#8dd5ff'},
+  structure: {label: '结构', color: '#ff9b87'},
+  note: {label: '备注', color: '#fbcc81'},
+  other: {label: '其他条件', color: '#c5cdd9'}
+};
+
+export function markColor(mark) {
+  if (typeof mark.color === 'string' && /^#[0-9a-f]{6}$/i.test(mark.color)) return mark.color.toLowerCase();
+  return (markKinds[mark.kind] ?? markKinds.note).color;
+}
+
+export function markLegend(marks) {
+  const byColor = new Map();
+  for (const mark of marks) {
+    const color = markColor(mark);
+    if (!byColor.has(color)) byColor.set(color, new Set());
+    byColor.get(color).add((markKinds[mark.kind] ?? markKinds.note).label);
+  }
+  return Array.from(byColor, ([color, labels]) => ({color, labels: Array.from(labels)}));
+}

@@ -1,0 +1,2 @@
+# 与 TypeScript 侧保持 2 空格缩进，避免 Rust 改动产生整文件 diff。
+tab_spaces = 2

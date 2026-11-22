@@ -18,6 +18,10 @@
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19 19 5M10 5h9v9"/></symbol>
     <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14m-4 0h8"/></symbol>
     <symbol id="i-select" viewBox="0 0 24 24"><path d="m5 4 15 8-7 1-3 7Z"/></symbol>
+    <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19 19 5"/></symbol>
+    <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12"/></symbol>
+    <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></symbol>
+    <symbol id="i-arc" viewBox="0 0 24 24"><path d="M4 17A9 9 0 0 1 20 9"/></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="m8 5-4 4 4 4M4 9h11a5 5 0 0 1 0 10h-2"/></symbol>
     <symbol id="i-redo" viewBox="0 0 24 24"><path d="m16 5 4 4-4 4m4-4H9a5 5 0 0 0 0 10h2"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="1.4"/><path d="m4 17 5-4 4 3 4-5 4 4"/></symbol>
@@ -36,7 +40,7 @@
       <span class="separator"></span>
       <details class="menu">
         <summary title="文件菜单">文件</summary>
-        <div class="menu-popup align-left"><button id="new">新建空白</button><button id="demo">支架示例</button><button id="import">导入图片</button><button id="export-png">导出 PNG</button><button id="export-json">导出 JSON</button><button id="install">安装应用</button></div>
+        <div class="menu-popup align-left"><button id="new">新建空白</button><button id="demo">支架示例</button><button id="import">导入图片</button><button id="export-png">导出 PNG</button><button id="export-svg">导出 SVG</button><button id="export-json">导出 JSON</button><button id="install">安装应用</button></div>
       </details>
       <input id="image-file" type="file" accept="image/*" hidden>
       <span class="separator"></span>
@@ -53,6 +57,10 @@
     </div>
     <div class="tool-group floating" role="group" aria-label="绘图工具">
       <button data-tool="select" aria-pressed="false" title="选择及编辑标注" aria-label="选择"><svg class="icon" aria-hidden="true"><use href="#i-select"/></svg><span>选择</span></button>
+      <button data-tool="line" aria-pressed="false" title="直线" aria-label="直线"><svg class="icon" aria-hidden="true"><use href="#i-line"/></svg><span>直线</span></button>
+      <button data-tool="rect" aria-pressed="false" title="矩形" aria-label="矩形"><svg class="icon" aria-hidden="true"><use href="#i-rect"/></svg><span>矩形</span></button>
+      <button data-tool="circle" aria-pressed="false" title="圆" aria-label="圆"><svg class="icon" aria-hidden="true"><use href="#i-circle"/></svg><span>圆</span></button>
+      <button data-tool="arc" aria-pressed="false" title="圆弧" aria-label="圆弧"><svg class="icon" aria-hidden="true"><use href="#i-arc"/></svg><span>圆弧</span></button>
       <button data-tool="pen" aria-pressed="true" title="画笔" aria-label="画笔"><svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg><span>画笔</span></button>
       <button data-tool="region" aria-pressed="false" title="圈选区域" aria-label="圈选"><svg class="icon" aria-hidden="true"><use href="#i-region"/></svg><span>圈选</span></button>
       <button data-tool="arrow" aria-pressed="false" title="画载荷箭头" aria-label="箭头"><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg><span>箭头</span></button>
@@ -65,6 +73,14 @@
     <div class="selection-actions floating" id="selection-actions" hidden>
       <button id="edit-selected">编辑</button><button id="delete-selected" title="删除选中的对象">删除</button>
       <label for="object-layer">所在图层</label><select id="object-layer" aria-label="选中对象所在图层"></select>
+    </div>
+    <div class="selection-actions floating" id="shape-actions" hidden>
+      <span id="shape-count">已选 0 个图形</span>
+      <button data-boolean="union" title="合并成一个区域">并集</button>
+      <button data-boolean="subtract" title="先选中的图形保留，其余图形被减去">差集</button>
+      <button data-boolean="intersect" title="只保留公共区域">交集</button>
+      <button id="shape-clear" title="取消图形选择">取消</button>
+      <button id="shape-delete" class="danger" title="删除选中图形">删除</button>
     </div>
     <aside class="layers-panel floating" id="layers-panel" aria-label="图层" hidden>
       <div class="inspector-heading"><h2>图层</h2><button id="close-layers" class="icon-action" aria-label="关闭图层">×</button></div>
@@ -103,6 +119,6 @@
     </form>
   </dialog>
   <dialog id="install-dialog"><section><h2>安装 SimSketch</h2><p>iPhone / iPad：在 Safari 分享菜单中选「添加到主屏幕」，并开启「作为网页 App 打开」。</p><p>Android 或桌面 Chrome / Edge：在浏览器菜单中选择安装应用。Mac Safari 也可以「添加到程序坞」。</p><div class="dialog-actions"><span></span><button class="primary" data-close>完成</button></div></section></dialog>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.ts"></script>
 </body>
 </html>

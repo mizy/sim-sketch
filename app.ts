@@ -132,7 +132,11 @@ async function start(): Promise<void> {
   try {
     const draft = await readProject();
     if (draft) editor.load(draft, true);
-    else editor.apply(demoProject());
+    else {
+      editor.apply(demoProject());
+      // 新用户首屏保留基准画布取景；显式 F 才只框内容。
+      editor.fitInitialView();
+    }
   } catch {
     editor.load(demoProject(), false);
     status.textContent = '此浏览器无法保存草稿，可以导出';

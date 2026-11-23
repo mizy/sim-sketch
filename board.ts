@@ -1,12 +1,16 @@
 import {markGeometry} from './annotations.ts';
+import {bezierPathData} from './bezier.ts';
+import {normalizeShapeStrokeWidth} from './mark-width.ts';
 import {defaultLayerId, markColor} from './project.ts';
 import type {Mark, Project} from './project.ts';
-import {shapeClosed, shapePath, sketchInk} from './geometry.ts';
+import {ellipseRing, shapeClosed, shapePath, sketchInk} from './geometry.ts';
 import type {Point, Shape} from './geometry.ts';
 import {referenceElement} from './reference.ts';
 import {gridSpec} from './scene.ts';
+import {TEXT_CHIP_ASCII_WIDTH, TEXT_CHIP_FONT_SIZE, TEXT_CHIP_MIN_PADDING, TEXT_CHIP_WIDE_WIDTH,
+  textLabelBox} from './text-metrics.ts';
 import {cssColor} from './theme.ts';
-import {svgElement} from './svg-dom.ts';
+import {ringsPath, svgElement} from './svg-dom.ts';
 import type {SvgChild} from './svg-dom.ts';
 
 
@@ -15,6 +19,8 @@ export interface BoardView {
   temporaryShape?: Shape | null;
   selectedMark?: string | null;
   selectedShapes?: readonly string[];
+  /** 导出/快照背景覆盖范围；缺省用 960×600 基准画布。 */
+  backdrop?: {x: number; y: number; width: number; height: number};
 }
 
 export interface OverlayView {
@@ -22,27 +28,36 @@ export interface OverlayView {
   selectedShapes?: readonly string[];
   /** 导出时没有交互，不需要透明命中代理。 */
   hitProxies?: boolean;
+  /** 1 个 CSS 像素对应的世界单位（1/zoom）；命中代理按屏幕尺寸保底。 */
+  hitScale?: number;
 }
 
 let patternSerial = 0;
 
-export function boardPoint(board: SVGSVGElement, event: {clientX: number; clientY: number}): Point {
-  const matrix = board.getScreenCTM();
-  if (!matrix) return [Math.round(event.clientX), Math.round(event.clientY)];
-  const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
-  return [Math.round(point.x), Math.round(point.y)];
-}
 
 function pointText(points: readonly Point[]): string {
   return points.map(point => point.join(',')).join(' ');
 }
 
-function hitPath(d: string, closed: boolean): SVGPathElement {
-  return svgElement('path', {d, fill: closed ? 'transparent' : 'none', 'fill-rule': 'evenodd',
-    stroke: 'transparent', 'stroke-width': 18, 'pointer-events': 'all'});
+/**
+ * 命中代理至少保持 basePx 个 CSS 像素，粗线则跟随自身线宽。
+ * 10% 缩放下仍约 18 CSS px，800% 下不会因为世界单位放大而过度遮挡邻居。
+ */
+function hitWidth(basePx: number, strokeWidth: number, hitScale: number): number {
+  // 防御未经 normalizeProject 的脏数据：NaN/Infinity 不能把命中路径一起拖成不可用。
+  return Math.max(basePx * hitScale, Number.isFinite(strokeWidth) ? strokeWidth : 0);
 }
 
-function annotation(mark: Mark, selected: boolean, overlayOnly: boolean): SVGGElement {
+function shapeStrokeWidth(shape: Shape): number {
+  return normalizeShapeStrokeWidth(shape.strokeWidth);
+}
+
+function hitPath(d: string, closed: boolean, strokeWidth: number): SVGPathElement {
+  return svgElement('path', {d, fill: closed ? 'transparent' : 'none', 'fill-rule': 'evenodd',
+    stroke: 'transparent', 'stroke-width': strokeWidth, 'pointer-events': 'all'});
+}
+
+function annotation(mark: Mark, selected: boolean, overlayOnly: boolean, hitScale = 1): SVGGElement {
   const group = svgElement('g', {'data-id': mark.id, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'});
   let anchor: Point | undefined;
   switch (mark.shape) {
@@ -51,9 +66,15 @@ function annotation(mark: Mark, selected: boolean, overlayOnly: boolean): SVGGEl
       anchor = style.points[0];
       const trace = style.points.length === 1 ? [anchor, [anchor[0] + .1, anchor[1]] as Point] : style.points;
       const points = pointText(trace);
-      group.append(svgElement('polyline', {points, fill: 'none', stroke: 'transparent', 'stroke-width': 18,
-        'pointer-events': overlayOnly ? 'stroke' : 'none'}));
-      if (!overlayOnly) group.append(svgElement('polyline', {points, fill: 'none', stroke: style.color, 'stroke-width': style.width}));
+      group.append(svgElement('polyline', {points, fill: 'none', stroke: 'transparent',
+        'stroke-width': hitWidth(18, style.width, hitScale), 'pointer-events': overlayOnly ? 'stroke' : 'none'}));
+      if (!overlayOnly) {
+        // 拟合笔迹按可编辑贝塞尔导出；points 仍是同一曲线的离散采样，命中/包围盒不受影响。
+        group.append(style.curve
+          ? svgElement('path', {d: bezierPathData(style.curve), fill: 'none', stroke: style.color,
+            'stroke-width': style.width})
+          : svgElement('polyline', {points, fill: 'none', stroke: style.color, 'stroke-width': style.width}));
+      }
       break;
     }
     case 'region': {
@@ -62,9 +83,18 @@ function annotation(mark: Mark, selected: boolean, overlayOnly: boolean): SVGGEl
       anchor = [Math.min(a[0], b[0]), Math.min(a[1], b[1])];
       const [cx, cy] = style.center;
       const [rx, ry] = style.radii;
-      if (overlayOnly) {
+      if (style.rotation) {
+        const d = ringsPath([ellipseRing(style.center, style.radii, style.rotation)]);
+        group.append(svgElement('path', {d,
+          fill: overlayOnly ? 'transparent' : style.color,
+          'fill-opacity': overlayOnly ? 0 : style.fill,
+          stroke: overlayOnly ? 'transparent' : style.color,
+          'stroke-width': overlayOnly ? hitWidth(18, style.width, hitScale) : style.width,
+          'stroke-dasharray': overlayOnly || !style.dashed ? 'none' : '9 5',
+          'pointer-events': overlayOnly ? 'all' : 'none'}));
+      } else if (overlayOnly) {
         group.append(svgElement('ellipse', {cx, cy, rx, ry, fill: 'transparent', stroke: 'transparent',
-          'stroke-width': 18, 'pointer-events': 'all'}));
+          'stroke-width': hitWidth(18, style.width, hitScale), 'pointer-events': 'all'}));
       } else {
         group.append(svgElement('ellipse', {cx, cy, rx, ry, fill: style.color,
           'fill-opacity': style.fill, stroke: style.color, 'stroke-width': style.width,
@@ -77,8 +107,8 @@ function annotation(mark: Mark, selected: boolean, overlayOnly: boolean): SVGGEl
       const [a, b, left, , right] = style.points;
       anchor = a;
       const d = `M${a} L${b} M${left} L${b} L${right}`;
-      group.append(svgElement('path', {d, fill: 'none', stroke: 'transparent', 'stroke-width': 22,
-        'pointer-events': overlayOnly ? 'stroke' : 'none'}));
+      group.append(svgElement('path', {d, fill: 'none', stroke: 'transparent',
+        'stroke-width': hitWidth(22, style.width, hitScale), 'pointer-events': overlayOnly ? 'stroke' : 'none'}));
       if (!overlayOnly) group.append(svgElement('path', {d, fill: 'none', stroke: style.color, 'stroke-width': style.width}));
       break;
     }
@@ -88,41 +118,55 @@ function annotation(mark: Mark, selected: boolean, overlayOnly: boolean): SVGGEl
   }
   const value = mark.value === null ? '' : ` ${mark.value} ${mark.unit}`;
   const label = (mark.label + value).trim();
-  if (label && anchor && mark.shape === 'text') {
+  const textBox = mark.shape === 'text' ? textLabelBox(mark) : null;
+  if (textBox && anchor && mark.shape === 'text') {
     const style = markGeometry(mark, selected);
-    const width = Array.from(label).reduce((sum, char) => sum + ((char.codePointAt(0) ?? 0) > 255 ? 22 : 13), 0);
-    group.append(svgElement('rect', {x: anchor[0] - 3, y: anchor[1] - 3, width: width + 6, height: 29,
-      rx: 3, fill: 'transparent', stroke: selected ? '#3047cc' : 'none', 'stroke-width': 1.5, 'stroke-dasharray': '4 3'}));
-    group.append(svgElement('text', {x: anchor[0], y: anchor[1], fill: style.color, 'font-size': 22,
-      'font-family': 'system-ui, sans-serif', 'font-weight': 650, 'dominant-baseline': 'hanging',
-      'paint-order': 'stroke', stroke: selected ? '#ffffff' : 'none', 'stroke-width': 3}, [label]));
+    // 文字命中框按 8 CSS px 外扩，10% 缩放下仍能点中；导出不生成该代理。
+    if (overlayOnly) {
+      const pad = 8 * hitScale;
+      group.append(svgElement('rect', {x: textBox.x - pad, y: textBox.y - pad,
+        width: textBox.width + pad * 2, height: textBox.height + pad * 2,
+        fill: 'transparent', stroke: 'none', 'pointer-events': 'all'}));
+    }
+    if (textBox.label) {
+      const border = overlayOnly ? 1.5 * hitScale : 1.5;
+      group.append(svgElement('rect', {x: textBox.x, y: textBox.y, width: textBox.width, height: textBox.height,
+        rx: 3, fill: 'transparent', stroke: selected ? '#3047cc' : 'none', 'stroke-width': border,
+        'stroke-dasharray': `${4 * (overlayOnly ? hitScale : 1)} ${3 * (overlayOnly ? hitScale : 1)}`}));
+      group.append(svgElement('text', {x: anchor[0], y: anchor[1], fill: style.color,
+        'font-size': style.fontSize,
+        'font-family': 'system-ui, sans-serif', 'font-weight': 650, 'dominant-baseline': 'hanging',
+        'paint-order': 'stroke', stroke: selected ? '#ffffff' : 'none',
+        'stroke-width': overlayOnly ? 3 * hitScale : 3}, [textBox.label]));
+    }
   } else if (label && anchor) {
     const color = markColor(mark);
     const characters = Array.from(label);
     const visibleLabel = characters.length > 29 ? characters.slice(0, 28).join('') + '…' : label;
     const width = Math.min(665, Array.from(visibleLabel).reduce((total, char) =>
-      total + ((char.codePointAt(0) ?? 0) > 255 ? 24 : 13), 22));
+      total + ((char.codePointAt(0) ?? 0) > 255 ? TEXT_CHIP_WIDE_WIDTH : TEXT_CHIP_ASCII_WIDTH),
+      TEXT_CHIP_MIN_PADDING));
     const x = Math.max(4, Math.min(956 - width, anchor[0] + (mark.shape === 'arrow' ? 10 : 0)));
     const y = anchor[1] - 9;
     group.append(svgElement('rect', {x, y: y - 25, width, height: 34, rx: 7,
       fill: '#ffffff', stroke: color, 'stroke-width': selected ? 2 : 1}));
-    group.append(svgElement('text', {x: x + 9, y, fill: color, 'font-size': 22,
+    group.append(svgElement('text', {x: x + 9, y, fill: color, 'font-size': TEXT_CHIP_FONT_SIZE,
       'font-family': 'system-ui, sans-serif', 'font-weight': 650}, [visibleLabel]));
   }
   return group;
 }
 
-function sketchShape(shape: Shape, selected: boolean, overlayOnly: boolean): SVGGElement {
+function sketchShape(shape: Shape, selected: boolean, overlayOnly: boolean, hitScale = 1): SVGGElement {
   const group = svgElement('g', {'data-shape-id': shape.id});
   const d = shapePath(shape);
   if (!d) return group;
+  const strokeWidth = shapeStrokeWidth(shape);
   if (overlayOnly) {
-    group.append(hitPath(d, shapeClosed(shape)));
+    group.append(hitPath(d, shapeClosed(shape), hitWidth(18, strokeWidth, hitScale)));
     return group;
   }
   const closed = shapeClosed(shape);
   const color = shape.color ?? sketchInk;
-  const strokeWidth = shape.strokeWidth ?? 2.4;
   if (selected) {
     group.append(svgElement('path', {d, fill: 'none', stroke: '#3047cc', 'stroke-width': strokeWidth + 7,
       'stroke-opacity': .16, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}));
@@ -179,13 +223,14 @@ function markOverlay(group: SVGGElement): SVGGElement {
   return marks;
 }
 
-const hitShapeSources = new WeakMap<SVGGElement, Shape>();
-const markNodeSources = new WeakMap<SVGGElement, {mark: Mark; selected: boolean}>();
+const hitShapeSources = new WeakMap<SVGGElement, {shape: Shape; hitScale: number}>();
+const markNodeSources = new WeakMap<SVGGElement, {mark: Mark; selected: boolean; hitScale: number}>();
 
-function updateShapeHit(node: SVGGElement, shape: Shape): void {
-  // 未变化的图元保持同一 shape 引用；只有被拖动/编辑的图元才重写 path。
-  if (hitShapeSources.get(node) === shape) return;
-  hitShapeSources.set(node, shape);
+function updateShapeHit(node: SVGGElement, shape: Shape, hitScale: number): void {
+  // 未变化的图元保持同一 shape 引用；缩放变化时只更新命中宽度，不重建 path 内容。
+  const source = hitShapeSources.get(node);
+  if (source?.shape === shape && source.hitScale === hitScale) return;
+  hitShapeSources.set(node, {shape, hitScale});
   const path = node.firstElementChild as SVGPathElement | null;
   const d = shapePath(shape);
   if (!d) {
@@ -193,12 +238,13 @@ function updateShapeHit(node: SVGGElement, shape: Shape): void {
     return;
   }
   if (!path) {
-    node.append(hitPath(d, shapeClosed(shape)));
+    node.append(hitPath(d, shapeClosed(shape), hitWidth(18, shapeStrokeWidth(shape), hitScale)));
     return;
   }
   path.setAttribute('d', d);
   path.setAttribute('fill', shapeClosed(shape) ? 'transparent' : 'none');
   path.setAttribute('fill-rule', 'evenodd');
+  path.setAttribute('stroke-width', String(hitWidth(18, shapeStrokeWidth(shape), hitScale)));
 }
 
 /**
@@ -206,7 +252,7 @@ function updateShapeHit(node: SVGGElement, shape: Shape): void {
  * 命中代理按 shape id 增量复用，避免 2000 图元时每个 pointermove 重建整层 DOM。
  */
 export function drawOverlay(board: SVGSVGElement, project: Project, view: OverlayView = {}): void {
-  const {selectedMark = null, selectedShapes = [], hitProxies = true} = view;
+  const {selectedMark = null, selectedShapes = [], hitProxies = true, hitScale = 1} = view;
   const root = board.querySelector<SVGGElement>(':scope > [data-overlay]') ??
     svgElement('g', {'data-overlay': ''});
   if (!root.parentNode) board.append(root);
@@ -224,9 +270,9 @@ export function drawOverlay(board: SVGSVGElement, project: Project, view: Overla
     for (const shape of project.shapes ?? []) {
       if ((shape.layerId ?? defaultLayerId) !== layer.id) continue;
       if (!hitProxies) continue;
-      const node = existing.get(shape.id) ?? sketchShape(shape, selectedShapes.includes(shape.id), true);
+      const node = existing.get(shape.id) ?? sketchShape(shape, selectedShapes.includes(shape.id), true, hitScale);
       existing.delete(shape.id);
-      updateShapeHit(node, shape);
+      updateShapeHit(node, shape, hitScale);
       desiredShapes.push(node);
     }
     syncChildren(hits, desiredShapes);
@@ -242,12 +288,12 @@ export function drawOverlay(board: SVGSVGElement, project: Project, view: Overla
       const cached = existingMarks.get(mark.id);
       const source = cached ? markNodeSources.get(cached) : undefined;
       existingMarks.delete(mark.id);
-      if (cached && source?.mark === mark && source.selected === selected) {
+      if (cached && source?.mark === mark && source.selected === selected && source.hitScale === hitScale) {
         desiredMarks.push(cached);
         continue;
       }
-      const node = annotation(mark, selected, true);
-      markNodeSources.set(node, {mark, selected});
+      const node = annotation(mark, selected, true, hitScale);
+      markNodeSources.set(node, {mark, selected, hitScale});
       desiredMarks.push(node);
     }
     syncChildren(marks, desiredMarks);
@@ -261,7 +307,8 @@ export function drawOverlay(board: SVGSVGElement, project: Project, view: Overla
  * 因此导出结果与迁移前保持一致。
  */
 export function drawBoard(board: SVGSVGElement, project: Project, view: BoardView = {}): void {
-  const {temporaryMark = null, temporaryShape = null, selectedMark = null, selectedShapes = []} = view;
+  const {temporaryMark = null, temporaryShape = null, selectedMark = null, selectedShapes = [],
+    backdrop = {x: 0, y: 0, width: 960, height: 600}} = view;
   const gridId = `sim-sketch-grid-${++patternSerial}`;
   const dots = svgElement('pattern', {id: gridId, width: gridSpec.spacing, height: gridSpec.spacing,
     patternUnits: 'userSpaceOnUse'},
@@ -286,10 +333,11 @@ export function drawBoard(board: SVGSVGElement, project: Project, view: BoardVie
     }
     return layerGroup(layer.id, layer.opacity ?? 1, reference ? [reference, shapes, marks] : [shapes, marks]);
   });
-  const background = svgElement('rect', {class: 'board-geometry', x: -10000, y: -10000, width: 20000,
-    height: 20000, fill: cssColor(gridSpec.background)});
-  const grid = svgElement('rect', {class: 'board-geometry', x: -10000, y: -10000, width: 20000,
-    height: 20000, fill: `url(#${gridId})`});
+  // 背景/网格必须覆盖导出包围盒，而不是固定的 20000 单位窗口。
+  const background = svgElement('rect', {class: 'board-geometry', x: backdrop.x, y: backdrop.y,
+    width: backdrop.width, height: backdrop.height, fill: cssColor(gridSpec.background)});
+  const grid = svgElement('rect', {class: 'board-geometry', x: backdrop.x, y: backdrop.y,
+    width: backdrop.width, height: backdrop.height, fill: `url(#${gridId})`});
   board.replaceChildren(svgElement('defs', {}, [dots]), background, grid, ...groups);
 }
 

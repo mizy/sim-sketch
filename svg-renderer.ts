@@ -80,11 +80,14 @@ export class SvgRenderer implements SketchRenderer {
       return svgElement('g', {'data-layer-id': layer.id, opacity: layer.opacity ?? 1}, children);
     });
     const snaps = scene.snap.map(marker => renderMarker(marker.point, scene));
+    const {viewport} = scene;
+    // SVG 回退的底色/网格随 viewBox 铺满；平移无限延伸时不会露出固定 20000 窗口的空白边缘。
     this.geometry.replaceChildren(
       svgElement('defs', {}, [dots]),
-      svgElement('rect', {x: -10000, y: -10000, width: 20000, height: 20000,
+      svgElement('rect', {x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height,
         fill: cssColor(scene.background.background)}),
-      svgElement('rect', {x: -10000, y: -10000, width: 20000, height: 20000, fill: `url(#${gridId})`}),
+      svgElement('rect', {x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height,
+        fill: `url(#${gridId})`}),
       ...layers,
       ...snaps
     );

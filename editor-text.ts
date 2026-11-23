@@ -1,5 +1,7 @@
 import {markColor} from './project.ts';
 import type {Mark, Project, TextMark} from './project.ts';
+import {textFontSize} from './text-metrics.ts';
+import {boardScreenScale, boardToScreen} from './viewport.ts';
 
 export interface TextEditingHost {
   board: SVGSVGElement;
@@ -91,16 +93,15 @@ export class InlineTextEditor {
 
   position(): void {
     if (!this.inline) return;
-    const matrix = this.host.board.getScreenCTM();
     const parent = this.host.board.parentElement;
-    if (!matrix || !parent) return;
-    const point = new DOMPoint(this.inline.mark.a[0], this.inline.mark.a[1]).matrixTransform(matrix);
+    if (!parent) return;
+    const point = boardToScreen(this.host.board, this.inline.mark.a);
     const wrap = parent.getBoundingClientRect();
-    const scale = matrix.a;
+    const scale = boardScreenScale(this.host.board);
     const input = this.host.input;
     input.style.left = `${point.x - wrap.left}px`;
     input.style.top = `${point.y - wrap.top}px`;
-    input.style.fontSize = `${22 * scale}px`;
+    input.style.fontSize = `${textFontSize(this.inline.mark) * scale}px`;
     input.style.color = markColor(this.inline.mark);
     input.style.width = `${Math.max(80, Math.min(wrap.right - point.x - 12, 450))}px`;
   }

@@ -21,6 +21,15 @@ test('draws, selects and persists a rectangle after reload', async ({page}) => {
   await page.locator('[data-tool="select"]').click();
   await page.mouse.click(box.x + 280, box.y + 215);
   await expect(page.locator('#shape-actions')).toBeVisible();
+  // 选中操作条必须贴着图形，而不是钉在画板顶部。同一帧读取两者，避免布局漂移。
+  const placement = await page.evaluate(() => {
+    const shape = document.querySelector('[data-shape-id]')!.getBoundingClientRect();
+    const actions = document.querySelector<HTMLElement>('#shape-actions')!.getBoundingClientRect();
+    return {shape: shape.toJSON(), actions: actions.toJSON()};
+  });
+  expect(placement.actions.y + placement.actions.height).toBeLessThanOrEqual(placement.shape.y + 1);
+  expect(Math.abs(placement.actions.x + placement.actions.width / 2 -
+    (placement.shape.x + placement.shape.width / 2))).toBeLessThan(80);
   await expect(page.locator('#status')).toHaveText('草稿已保存在此设备');
 
   await page.reload();

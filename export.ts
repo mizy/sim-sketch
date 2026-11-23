@@ -2,6 +2,7 @@ import {bitmap} from './reference.ts';
 import {markColor, markLegend} from './project.ts';
 import type {Project} from './project.ts';
 import {renderSvgDocument} from './svg-document.ts';
+import {fitWorldRect, exportViewBox} from './viewport.ts';
 
 export interface ExportHost {
   board: SVGSVGElement;
@@ -16,8 +17,10 @@ function download(url: string, filename: string): void {
   link.click();
 }
 
+/** 导出永远使用内容适配 viewBox，实时缩放/平移不会泄漏到 SVG/PNG/JSON。 */
 function snapshot(host: ExportHost): SVGSVGElement {
-  return renderSvgDocument(host.project(), host.board.getAttribute('viewBox') ?? '0 0 960 600');
+  const project = host.project();
+  return renderSvgDocument(project, exportViewBox(project));
 }
 
 /** 复制 PNG 到剪贴板；不支持时退化为明确提示。 */
@@ -45,9 +48,10 @@ export async function exportPng(host: ExportHost): Promise<void> {
 
 export function exportSvg(host: ExportHost): void {
   const copy = snapshot(host);
+  const {width, height} = exportSize(host.project());
   copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  copy.setAttribute('width', '960');
-  copy.setAttribute('height', '600');
+  copy.setAttribute('width', String(width));
+  copy.setAttribute('height', String(height));
   const output = '<?xml version="1.0" encoding="UTF-8"?>' + new XMLSerializer().serializeToString(copy);
   const url = URL.createObjectURL(new Blob([output], {type: 'image/svg+xml'}));
   download(url, 'sim-sketch.svg');
@@ -56,11 +60,19 @@ export function exportSvg(host: ExportHost): void {
 
 export function exportJson(host: ExportHost): void {
   const project = host.project();
-  const view = host.board.viewBox.baseVal;
-  const output = {version: 1, coordinateSystem: 'image-pixels', width: 960, height: 600,
-    viewBox: [view.x, view.y, view.width, view.height], ...project,
+  const view = exportViewBox(project).split(' ').map(Number);
+  const size = exportSize(project);
+  // 派生字段放在项目之后，避免外部/旧数据里的 viewBox/width/height 覆盖导出视口。
+  const output = {version: 1, coordinateSystem: 'image-pixels', ...project,
+    width: size.width, height: size.height, viewBox: view,
     legend: markLegend(project.marks), marks: project.marks.map(mark => ({...mark, color: markColor(mark)}))};
   const url = URL.createObjectURL(new Blob([JSON.stringify(output, null, 2)], {type: 'application/json'}));
   download(url, 'sim-sketch.json');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** 导出画布尺寸跟随内容包围盒；空项目仍是 960×600。 */
+function exportSize(project: Project): {width: number; height: number} {
+  const view = fitWorldRect(project, 960, 600);
+  return {width: Math.max(1, Math.ceil(view.width)), height: Math.max(1, Math.ceil(view.height))};
 }

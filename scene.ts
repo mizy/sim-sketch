@@ -1,8 +1,9 @@
-import {arcPoints, sketchInk} from './geometry.ts';
+import {arcPoints, ellipseRing, rectCorners, sketchInk} from './geometry.ts';
 import type {Point, Polygon, Shape} from './geometry.ts';
 import {defaultLayerId} from './project.ts';
 import type {Mark, Project} from './project.ts';
 import {markGeometry} from './annotations.ts';
+import {normalizeShapeStrokeWidth} from './mark-width.ts';
 import {accent, paper, rgba} from './theme.ts';
 import type {
   EllipsePrimitive,
@@ -31,10 +32,28 @@ export const gridSpec: GridSpec = {
 };
 const halo = rgba(accent, .16);
 const selectedInk = rgba(accent);
+/** 缩到很小时间距低于该像素时按 2 的幂抽稀网格，避免 Canvas2D 逐点绘制数十万圆点。 */
+const MIN_GRID_SCREEN_SPACING = 9;
+
+/** 交互网格 LOD 后的实际间距（world 单位）；捕捉与可见网格共用同一口径。 */
+export function gridSpacingForViewport(pixelsPerWorldUnit: number): number {
+  const ppu = Math.max(pixelsPerWorldUnit, 1e-6);
+  let factor = 1;
+  while (gridSpec.spacing * factor * ppu < MIN_GRID_SCREEN_SPACING && factor < 1024) factor *= 2;
+  return gridSpec.spacing * factor;
+}
+
+/** 交互网格 LOD；导出走 drawBoard 的原生 gridSpec，不受实时缩放影响。 */
+function gridForViewport(pixelsPerWorldUnit: number): GridSpec {
+  const spacing = gridSpacingForViewport(pixelsPerWorldUnit);
+  if (spacing === gridSpec.spacing) return gridSpec;
+  return {...gridSpec, spacing, radius: gridSpec.radius * spacing / gridSpec.spacing};
+}
 
 interface RectProjection {
   a: Point;
   b: Point;
+  rotation: number;
   ring: Point[];
   polygons: Polygon[];
 }
@@ -47,11 +66,12 @@ const rectProjections = new WeakMap<Extract<Shape, {type: 'rect'}>, RectProjecti
 
 function projectRect(shape: Extract<Shape, {type: 'rect'}>): RectProjection {
   const cached = rectProjections.get(shape);
+  const rotation = shape.rotation ?? 0;
   if (cached && cached.a[0] === shape.a[0] && cached.a[1] === shape.a[1] &&
-    cached.b[0] === shape.b[0] && cached.b[1] === shape.b[1]) return cached;
-  const [[x1, y1], [x2, y2]] = [shape.a, shape.b];
-  const ring: Point[] = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
-  const projection = {a: shape.a, b: shape.b, ring, polygons: [[ring]]};
+    cached.b[0] === shape.b[0] && cached.b[1] === shape.b[1] &&
+    cached.rotation === rotation) return cached;
+  const ring = rectCorners(shape);
+  const projection = {a: shape.a, b: shape.b, rotation, ring, polygons: [[ring]]};
   rectProjections.set(shape, projection);
   return projection;
 }
@@ -76,7 +96,7 @@ function pushFill(items: RenderPrimitive[], layerId: string, polygons: readonly 
 function addShape(items: RenderPrimitive[], shape: Shape, selected: boolean): void {
   const layerId = shape.layerId ?? defaultLayerId;
   const color = rgba(shape.color ?? sketchInk);
-  const width = shape.strokeWidth ?? 2.4;
+  const width = normalizeShapeStrokeWidth(shape.strokeWidth);
   const stroke = selected ? selectedInk : color;
   const strokeWidth = selected ? width + .8 : width;
 
@@ -128,6 +148,14 @@ function addMark(items: RenderPrimitive[], mark: Mark, selected: boolean): void 
     }
     case 'region': {
       const style = markGeometry(mark, selected);
+      if (style.rotation) {
+        // 旋转椭圆没有原生 GPU 图元；用同一采样环走 fill + stroke，三个后端结果一致。
+        const ring = ellipseRing(style.center, style.radii, style.rotation);
+        pushFill(items, layerId, [[ring]], rgba(style.color), style.fill);
+        pushStroke(items, layerId, ring, rgba(style.color), style.width, true,
+          style.dashed ? [9, 5] : undefined);
+        return;
+      }
       pushEllipse(items, layerId, style.center, style.radii, rgba(style.color), style.width, style.fill, style.dashed);
       return;
     }
@@ -169,7 +197,7 @@ export function buildScene(project: Project, options: SceneOptions): RenderScene
   return {
     revision: options.revision ?? 0,
     viewport: options.viewport,
-    background: gridSpec,
+    background: gridForViewport(options.viewport.pixelsPerWorldUnit),
     reference: project.reference ? {layerId: project.referenceLayerId ?? project.layers[0]?.id ?? defaultLayerId,
       source: project.reference} : null,
     layers,

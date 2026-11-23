@@ -17,7 +17,7 @@ export interface PenFitResult {
   path: BezierPath;
   /** 拟合后相对简化点集的最大误差（world 单位）。 */
   maxError: number;
-  /** 本次使用的误差阈值，超出即保留原始手绘。 */
+  /** 本次使用的单段误差阈值；曲线超出时继续分段，而不是放弃拟合。 */
   threshold: number;
   simplified: Point[];
 }
@@ -34,12 +34,15 @@ const FIT_ERROR_WIDTH_FACTOR = 0.9;
 const FIT_ERROR_LENGTH_FACTOR = 0.02;
 /** 短于该长度的笔迹不拟合；点按/小勾保持原始手绘。 */
 const MIN_FIT_LENGTH = 6;
-/** 少于该顶点数说明 RDP 已把笔迹压成直线，曲线拟合没有足够约束。 */
-const MIN_CURVE_VERTICES = 3;
+/**
+ * 曲线拟合的分段上限。单条贝塞尔吃不下 S 形/多拐点笔迹时按误差递归分段，
+ * 上限保证异常噪声不会把一条笔迹炸成几十段。
+ */
+const MAX_PEN_FIT_SEGMENTS = 16;
 
 /**
- * @entry 手绘自动拟合：RDP 简化 → 最小二乘（首尾固定）→ 误差阈值判定。
- * 返回 null 表示应保留原始手绘，调用方不得丢弃数据。
+ * @entry 手绘自动拟合：RDP 简化 → 最小二乘（首尾固定）→ 误差超标就分段。
+ * 用户显式选择「直线拟合 / 曲线拟合」即表示希望改形，因此只有过短笔迹返回 null。
  */
 export function fitPenStroke(points: readonly Point[], options: PenFitOptions): PenFitResult | null {
   if (options.mode === 'off' || points.length < 3) return null;
@@ -53,20 +56,53 @@ export function fitPenStroke(points: readonly Point[], options: PenFitOptions): 
     const path: BezierPath = {start: [first[0], first[1]],
       segments: [{type: 'line', end: [last[0], last[1]]}]};
     const maxError = maxDistanceToPolyline(simplified, [first, last]);
-    return maxError <= threshold ? {path, maxError, threshold, simplified} : null;
+    return {path, maxError, threshold, simplified};
   }
-  if (simplified.length < MIN_CURVE_VERTICES) return null;
-  const segment = fitCurve(simplified, first, last, options.curve);
-  if (!segment) return null;
-  const path: BezierPath = {start: [first[0], first[1]], segments: [segment]};
+  const path = fitCurvePath(simplified, options.curve, threshold);
   const samples = sampleBezierPath(path, Math.min(0.25, threshold / 4));
   const maxError = maxDistanceToPolyline(simplified, samples);
-  return maxError <= threshold ? {path, maxError, threshold, simplified} : null;
+  return {path, maxError, threshold, simplified};
+}
+
+/**
+ * 单段拟合 → 若误差超过阈值，就在误差最大的顶点处切开递归。
+ * 每条子路径首尾固定为原笔迹上的顶点，拼接后仍连续。
+ */
+function fitCurvePath(points: readonly Point[], curve: PenCurveKind, threshold: number): BezierPath {
+  const segments: BezierSegment[] = [];
+  const fitRange = (from: number, to: number): void => {
+    if (segments.length >= MAX_PEN_FIT_SEGMENTS) return;
+    const span: Point[] = points.slice(from, to + 1).map(point => [point[0], point[1]]);
+    const end: Point = [span[span.length - 1][0], span[span.length - 1][1]];
+    if (span.length < 3) {
+      segments.push({type: 'line', end});
+      return;
+    }
+    const segment = fitCurve(span, span[0], end, curve);
+    if (!segment) {
+      segments.push({type: 'line', end});
+      return;
+    }
+    const error = maxSegmentErrorIndex(span, segment);
+    if (error.error <= threshold || segments.length + 2 > MAX_PEN_FIT_SEGMENTS) {
+      segments.push(segment);
+      return;
+    }
+    const split = from + error.index;
+    if (split <= from || split >= to) {
+      segments.push(segment);
+      return;
+    }
+    fitRange(from, split);
+    fitRange(split, to);
+  };
+  fitRange(0, points.length - 1);
+  return {start: [points[0][0], points[0][1]], segments};
 }
 
 /**
  * 拟合结果写回 PenMark：curve 是可编辑贝塞尔，points 同步为曲线采样。
- * 未达阈值/未启用时原样返回同一个对象，调用方可据此判断是否真的发生了拟合。
+ * 未启用或笔迹过短时原样返回同一个对象，调用方可据此判断是否真的发生了拟合。
  */
 export function fitPenMark(mark: PenMark, options: PenFitOptions): PenMark {
   const result = fitPenStroke(mark.points, options);
@@ -74,7 +110,7 @@ export function fitPenMark(mark: PenMark, options: PenFitOptions): PenMark {
   return {...mark, curve: result.path, points: sampleBezierPath(result.path)};
 }
 
-/** 误差阈值供 UI/测试解释“为什么保留手绘”，与拟合内部保持单一来源。 */
+/** 误差阈值供 UI/测试解释“拟合贴得多紧”，与拟合内部保持单一来源。 */
 export function fitErrorThreshold(width: number, totalLength: number): number {
   return Math.max(FIT_ERROR_MIN, Math.abs(width) * FIT_ERROR_WIDTH_FACTOR,
     Math.max(0, totalLength) * FIT_ERROR_LENGTH_FACTOR);
@@ -244,17 +280,38 @@ function segmentPoint(start: Point, segment: BezierSegment, t: number): Point {
   return [segment.end[0], segment.end[1]];
 }
 
-function maxDistanceToPolyline(points: readonly Point[], polyline: readonly Point[]): number {
-  if (!polyline.length) return Number.POSITIVE_INFINITY;
-  let maximum = 0;
-  for (const point of points) {
-    let minimum = Number.POSITIVE_INFINITY;
-    for (let index = 1; index < polyline.length; index++) {
-      minimum = Math.min(minimum, distanceToSegment(point, polyline[index - 1], polyline[index]));
-    }
-    if (polyline.length === 1) minimum = Math.hypot(point[0] - polyline[0][0], point[1] - polyline[0][1]);
-    maximum = Math.max(maximum, minimum);
+/** 片段的误差最大点；用于决定从哪个顶点继续分段。 */
+function maxSegmentErrorIndex(points: readonly Point[],
+  segment: BezierSegment): {index: number; error: number} {
+  const samples: Point[] = [];
+  for (let index = 0; index <= PROJECTION_SAMPLES; index++) {
+    samples.push(segmentPoint(points[0], segment, index / PROJECTION_SAMPLES));
   }
+  let maximum = 0;
+  let farthest = -1;
+  for (let index = 1; index < points.length - 1; index++) {
+    const distance = distanceToPolyline(points[index], samples);
+    if (distance > maximum) {
+      maximum = distance;
+      farthest = index;
+    }
+  }
+  return {index: farthest, error: maximum};
+}
+
+function distanceToPolyline(point: Point, polyline: readonly Point[]): number {
+  if (!polyline.length) return Number.POSITIVE_INFINITY;
+  if (polyline.length === 1) return Math.hypot(point[0] - polyline[0][0], point[1] - polyline[0][1]);
+  let minimum = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < polyline.length; index++) {
+    minimum = Math.min(minimum, distanceToSegment(point, polyline[index - 1], polyline[index]));
+  }
+  return minimum;
+}
+
+function maxDistanceToPolyline(points: readonly Point[], polyline: readonly Point[]): number {
+  let maximum = 0;
+  for (const point of points) maximum = Math.max(maximum, distanceToPolyline(point, polyline));
   return maximum;
 }
 

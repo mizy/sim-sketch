@@ -15,7 +15,7 @@ export interface BezierPath {
   segments: BezierSegment[];
 }
 
-/** 单条路径的段数上限；手绘拟合只产出一段，导入/旧草稿也不能无上限扩张。 */
+/** 单条路径的段数上限；手绘拟合按误差最多 16 段，导入/旧草稿也不能再扩张。 */
 export const MAX_BEZIER_SEGMENTS = 64;
 /** 交互绘制的离散化容差（world 单位，约等于 800% 下的 1.6px）。 */
 export const CURVE_FLATTEN_TOLERANCE = 0.2;

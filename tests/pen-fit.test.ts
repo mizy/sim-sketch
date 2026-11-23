@@ -49,7 +49,7 @@ describe('pen fitting', () => {
     expect(sampled.at(-1)).toEqual(cubicSource.at(-1));
   });
 
-  test('noisy point set above the adaptive threshold keeps the raw hand drawing', () => {
+  test('line mode snaps a wobbly stroke to a straight line even past the error threshold', () => {
     const points: Point[] = Array.from({length: 61}, (_, index) =>
       [index * 3, 100 + noise(index) * 22]);
     const mark: PenMark = {
@@ -57,15 +57,58 @@ describe('pen fitting', () => {
       direction: '', question: '', confirmed: false, source: 'manual', layerId: 'layer',
       points, width: 4
     };
-    for (const mode of ['line', 'curve'] as const) {
-      const result = fitPenStroke(points, {...options, mode});
-      expect(result).toBeNull();
-      expect(fitPenMark(mark, {...options, mode})).toBe(mark);
-    }
-    // 阈值确实按笔宽/总长自适应，而不是固定值。
+    const result = fitPenStroke(points, {...options, mode: 'line'});
+    expect(result).not.toBeNull();
+    // 用户显式选了「直线拟合」：偏差大也必须压成首尾两点，而不是静默保留手绘。
+    expect(result!.maxError).toBeGreaterThan(result!.threshold);
+    expect(result!.path.segments).toHaveLength(1);
+    expect(result!.path.segments[0]).toEqual({type: 'line', end: points.at(-1)});
+    const fitted = fitPenMark(mark, {...options, mode: 'line'});
+    expect(fitted).not.toBe(mark);
+    expect(fitted.points[0]).toEqual(points[0]);
+    expect(fitted.points.at(-1)).toEqual(points.at(-1));
+    // 阈值仍按笔宽/总长自适应，只是不再作为「放弃拟合」的开关。
     expect(fitErrorThreshold(1, 50)).toBe(1.5);
     expect(fitErrorThreshold(24, 100)).toBeCloseTo(21.6, 9);
     expect(fitErrorThreshold(4, 10_000)).toBeCloseTo(200, 9);
+  });
+
+  test('curve mode splits an S-shaped stroke into multiple bezier segments', () => {
+    const points: Point[] = Array.from({length: 241}, (_, index) => {
+      const t = index / 240;
+      return [t * 480, 120 + Math.sin(t * Math.PI * 4) * 60];
+    });
+    const result = fitPenStroke(points, {...options, mode: 'curve', curve: 'cubic'});
+    expect(result).not.toBeNull();
+    expect(result!.path.segments.length).toBeGreaterThan(1);
+    // 分段点落在共线/样本不足处时允许退化为直线段，其余段落保持三次贝塞尔。
+    expect(result!.path.segments.every(segment => segment.type === 'cubic' || segment.type === 'line')).toBe(true);
+    expect(result!.path.segments.some(segment => segment.type === 'cubic')).toBe(true);
+    expect(result!.maxError).toBeLessThanOrEqual(result!.threshold);
+    expect(result!.path.start).toEqual(points[0]);
+    expect(result!.path.segments.at(-1)!.end).toEqual(points.at(-1));
+  });
+
+  test('noisy stroke is fitted within tolerance instead of being dropped', () => {
+    const points: Point[] = Array.from({length: 121}, (_, index) =>
+      [index * 3, 100 + noise(index) * 6]);
+    for (const curve of ['quadratic', 'cubic'] as const) {
+      const result = fitPenStroke(points, {...options, mode: 'curve', curve});
+      expect(result).not.toBeNull();
+      expect(result!.path.segments.length).toBeLessThanOrEqual(16);
+      expect(result!.maxError).toBeLessThanOrEqual(result!.threshold);
+    }
+  });
+
+  test('short taps and hooks keep the raw stroke', () => {
+    const points: Point[] = [[0, 0], [2, 2], [3, 2.5]];
+    const mark: PenMark = {
+      id: 'pen', shape: 'pen', kind: 'note', label: '', value: null, unit: '',
+      direction: '', question: '', confirmed: false, source: 'manual', layerId: 'layer',
+      points, width: 4
+    };
+    expect(fitPenStroke(points, {...options, mode: 'line'})).toBeNull();
+    expect(fitPenMark(mark, {...options, mode: 'curve'})).toBe(mark);
   });
 
   test('RDP keeps endpoints and drops points within tolerance', () => {
